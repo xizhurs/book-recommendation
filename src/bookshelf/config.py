@@ -25,6 +25,9 @@ class LLMSettings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-6-luna"
     openai_base_url: str = "https://api.openai.com/v1"
+    # Chat completions rejects function tools while a reasoning model is thinking, so default
+    # to "none". Set it empty for models that do not accept the parameter at all.
+    openai_reasoning_effort: str = "none"
     ollama_model: str = "qwen3.5:4b"
     ollama_base_url: str = "http://127.0.0.1:11434/v1"
 

@@ -167,3 +167,43 @@ def test_chat_reports_missing_choices() -> None:
 
     with pytest.raises(llm.LLMError, match="no choices"):
         make_client(httpx.MockTransport(handler)).chat([])
+
+
+def test_http_errors_include_the_providers_message() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400, json={"error": {"message": "Unsupported value: 'temperature'", "type": "x"}}
+        )
+
+    client = make_client(httpx.MockTransport(handler))
+
+    with pytest.raises(llm.LLMError, match="Unsupported value: 'temperature'"):
+        client.chat([{"role": "user", "content": "hi"}])
+
+
+def _openai_settings(**overrides: object) -> LLMSettings:
+    return LLMSettings(_env_file=None, llm_provider="openai", openai_api_key="sk-test", **overrides)
+
+
+def _sent_body(settings: LLMSettings) -> dict[str, object]:
+    seen: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    llm.build_client(settings, transport=httpx.MockTransport(handler)).chat([])
+    return seen[0]
+
+
+def test_openai_requests_turn_reasoning_off_by_default() -> None:
+    assert _sent_body(_openai_settings())["reasoning_effort"] == "none"
+
+
+def test_openai_reasoning_effort_can_be_omitted_or_changed() -> None:
+    assert "reasoning_effort" not in _sent_body(_openai_settings(openai_reasoning_effort=" "))
+    assert _sent_body(_openai_settings(openai_reasoning_effort="low"))["reasoning_effort"] == "low"
+
+
+def test_ollama_requests_never_send_reasoning_effort() -> None:
+    assert "reasoning_effort" not in _sent_body(LLMSettings(_env_file=None))
