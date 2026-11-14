@@ -6,9 +6,10 @@ layer and hands plain models to these helpers.
 
 from __future__ import annotations
 
+import json
 from html import escape
 
-from .models import BookOut, DiscoveryItem, DiscoveryPage, ReadingStatus, Stats
+from .models import BookOut, DiscoveryItem, DiscoveryPage, ReadingStatus, Recommendation, Stats
 
 _IMPORT_HINT = "uv run python -m bookshelf.ingest.goodreads data/goodreads_library_export.csv"
 
@@ -126,6 +127,15 @@ nav a[aria-current="page"] { color: var(--accent); border-bottom-color: currentC
   background: var(--line); margin-bottom: 6px;
 }
 .badge-owned { background: #e5eaf4; color: var(--to-read); }
+.answer {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  padding: 20px; white-space: pre-wrap; margin: 0 0 12px;
+}
+.steps { margin: 0; padding-left: 18px; font-size: 0.82rem; color: var(--muted); }
+.steps li { margin: 6px 0; }
+.steps code { color: var(--ink); }
+.steps pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; font-size: 0.75rem; }
+.privacy { margin: 8px 0 16px; }
 """
 
 
@@ -211,7 +221,12 @@ def _book_count(total: int) -> str:
 
 
 def _nav(current: str) -> str:
-    links = (("/", "Library"), ("/find", "Find books"), ("/docs", "API docs"))
+    links = (
+        ("/", "Library"),
+        ("/find", "Find books"),
+        ("/ask", "Ask"),
+        ("/docs", "API docs"),
+    )
     parts: list[str] = []
     for href, label in links:
         current_attr = ' aria-current="page"' if href == current else ""
@@ -343,3 +358,58 @@ def render_discover(
 {meta}
 {body}"""
     return _shell(title="Find books · AI Bookshelf", current="/find", content=content)
+
+
+def render_ask(
+    *,
+    query: str | None,
+    result: Recommendation | None,
+    error: str | None,
+) -> str:
+    if error is not None:
+        body = f'<div class="empty"><p>{escape(error)}</p></div>'
+    elif result is None:
+        body = (
+            '<div class="empty">'
+            "<p>Ask for a recommendation grounded in your own shelf.</p>"
+            '<p class="muted">Try “What should I read after Dune?” or '
+            "“Which highly rated books have I been putting off?”</p></div>"
+        )
+    else:
+        body = _answer_body(result)
+    content = f"""<p class="sub">The model chooses tools, reads the results, then answers.</p>
+<form class="filters" method="get" action="/ask">
+<input type="search" name="q" value="{escape(query or "")}"
+ placeholder="What should I read next?" aria-label="Ask the bookshelf" maxlength="1000">
+<button type="submit">Ask</button>
+</form>
+<p class="muted privacy">Tool results never include review text. With
+<code>LLM_PROVIDER=ollama</code> everything stays on this machine; with
+<code>openai</code> your question and library metadata go to the hosted API.</p>
+{body}"""
+    return _shell(title="Ask · AI Bookshelf", current="/ask", content=content)
+
+
+def _answer_body(result: Recommendation) -> str:
+    meta = (
+        f'<p class="results">{escape(result.provider)} · {escape(result.model)} · '
+        f"{len(result.steps)} tool call{'s' if len(result.steps) != 1 else ''}</p>"
+    )
+    if not result.steps:
+        return f'{meta}<div class="answer">{escape(result.answer)}</div>'
+    items: list[str] = []
+    for step in result.steps:
+        arguments = json.dumps(step.arguments, ensure_ascii=False, indent=2)
+        items.append(
+            "<li>"
+            f"<code>{escape(step.name)}</code>"
+            f"<details><summary>arguments and result</summary>"
+            f"<pre>{escape(arguments)}</pre>"
+            f"<pre>{escape(step.result)}</pre>"
+            "</details></li>"
+        )
+    steps = f'<ol class="steps">{"".join(items)}</ol>'
+    return (
+        f'{meta}<div class="answer">{escape(result.answer)}</div>'
+        f"<details><summary>Tool calls</summary>{steps}</details>"
+    )

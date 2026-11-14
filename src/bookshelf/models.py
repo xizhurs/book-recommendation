@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import date
 from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ReadingStatus(StrEnum):
@@ -79,6 +80,32 @@ class DiscoveryPage(BaseModel):
     cached: bool
     requests_used: int
     reranked: bool = False
+
+
+class RecommendRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=1000)
+    max_steps: int | None = Field(default=None, ge=1, le=8)
+
+    @field_validator("query")
+    @classmethod
+    def _reject_blank_query(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("query must not be blank")
+        return stripped
+
+
+class ToolCallRecord(BaseModel):
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    result: str
+
+
+class Recommendation(BaseModel):
+    answer: str
+    provider: str
+    model: str
+    steps: list[ToolCallRecord] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):

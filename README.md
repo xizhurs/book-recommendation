@@ -1,10 +1,11 @@
 # AI Bookshelf
 
-Local-first reading history and, eventually, agentic book discovery.
+Local-first reading history with agentic book discovery.
 
-**Current status: M3.** Import a Goodreads CSV into SQLite, browse it through a read-only
-FastAPI API or the local web pages, search Open Library for books you do not own yet, and
-rerank those results with a local cross-encoder. MCP and the agent come in later milestones.
+**Current status: M4.** Import a Goodreads CSV into SQLite, browse it through a read-only
+FastAPI API or the local web pages, search Open Library for books you do not own yet, rerank
+those results with a local cross-encoder, and ask an LLM for recommendations through a
+tool-calling loop. Both a local Ollama model and the hosted OpenAI API are supported.
 
 ## Privacy first
 
@@ -14,6 +15,10 @@ rerank those results with a local cross-encoder. MCP and the agent come in later
 - `.env` is gitignored; only `.env.example` is committed.
 - Open Library searches send only the search text. Your library and reviews never leave the
   machine; responses are cached locally in SQLite.
+- **LLM tool results never contain review text** — only a `has_review` flag. With
+  `LLM_PROVIDER=ollama`, your questions and library metadata stay on this machine. With
+  `LLM_PROVIDER=openai`, the question and the compact tool results (titles, authors, status,
+  ratings) are sent to OpenAI; nothing else is.
 - Tests use `tests/fixtures/goodreads_sample.csv`, which contains fake books. Never copy real
   reading data into fixtures.
 
@@ -53,7 +58,8 @@ uv run uvicorn bookshelf.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Open <http://127.0.0.1:8000/> for the bookshelf UI, <http://127.0.0.1:8000/find> to search
-Open Library, or <http://127.0.0.1:8000/docs> for the interactive API docs.
+Open Library, <http://127.0.0.1:8000/ask> to ask for recommendations, or
+<http://127.0.0.1:8000/docs> for the interactive API docs.
 
 | Endpoint | Description |
 |---|---|
@@ -62,6 +68,8 @@ Open Library, or <http://127.0.0.1:8000/docs> for the interactive API docs.
 | `GET /books/{id}` | One book and its reading entry |
 | `GET /stats` | Counts by status, rating histogram, top authors/shelves |
 | `GET /discover` | Open Library search. Params: `q` (required), `limit`, `include_owned`, `rerank` |
+| `POST /recommend` | LLM recommendation. JSON: `{"query": "...", "max_steps": 4}` |
+| `GET /ask` | HTML page running the same loop as `/recommend`, server-rendered |
 
 `status` is one of `read`, `currently_reading`, or `to_read`.
 
@@ -109,6 +117,83 @@ uv run python -m bookshelf.discover "dune" --db data/other.db --include-owned
 The first rerank downloads the model; later runs print `cached · reranked` in the summary.
 
 
+## Ask the bookshelf
+
+`POST /recommend` and the `/ask` page run a small tool-calling loop: the model picks tools,
+the server executes them against your SQLite library, and the model answers from the results.
+
+```bash
+curl -s http://127.0.0.1:8000/recommend \
+  -H 'content-type: application/json' \
+  -d '{"query": "What should I read after Dune?", "max_steps": 4}' | jq
+```
+
+The response includes `answer`, `provider`, `model`, and every `steps[]` entry with the tool
+name, arguments, and result. `max_steps` (1–8, default `LLM_MAX_STEPS`) caps how many model
+turns run; when the budget runs out the loop asks once more for a plain answer.
+
+### Tools
+
+| Tool | Purpose |
+|---|---|
+| `search_library` | Search your own books by title/author; filter by status or rating |
+| `library_stats` | Counts, rating histogram, average rating, top authors/shelves |
+| `discover_books` | Open Library search (cached, deduped, reranked) for books you do not own |
+| `get_book` | One library book by numeric id |
+
+Tool output is compact JSON. It never includes review text — only `has_review`.
+
+### Choose a provider
+
+Both providers use the OpenAI chat-completions API, so the same client code runs either way.
+Switch with one variable in `.env`:
+
+```bash
+# Local and private (default)
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=qwen3.5:4b
+OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+
+# Hosted
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_BASE_URL=https://api.openai.com/v1
+```
+
+- For Ollama, run `ollama serve` and `ollama pull <model>` first. Use a model that supports
+  tool calling (for example `qwen3.5:4b`); the server calls `POST /v1/chat/completions`.
+- These names have no `BOOKSHELF_` prefix on purpose, so existing `.env` files keep working.
+- `LLM_TIMEOUT_SECONDS` and `LLM_TEMPERATURE` tune the request; `LLM_MAX_STEPS` sets the
+  default tool-call budget.
+- Errors from the provider return `502` with a short message; the `/ask` page shows it inline.
+
+### MCP server
+
+The same four tools are exposed over MCP stdio, so an MCP client can use them without the API:
+
+```bash
+uv run python -m bookshelf.mcp_server
+```
+
+Example Claude Desktop entry (use the absolute path to this repository):
+
+```json
+{
+  "mcpServers": {
+    "bookshelf": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "bookshelf.mcp_server"],
+      "cwd": "/absolute/path/to/book-recommendation"
+    }
+  }
+}
+```
+
+The server reads `BOOKSHELF_DB_PATH` (or `.env`) and opens one short-lived SQLite connection
+per call. It does not need the FastAPI server to be running.
+
+
 ## Tests and checks
 
 ```bash
@@ -120,32 +205,41 @@ uv run mypy src
 ```
 
 Tests create a temporary SQLite database and never touch `data/`. Open Library is always mocked
-via `httpx.MockTransport` or a patched `fetch_search`, and reranking is tested with a fake
-`Scorer`, so the suite needs no network and never downloads model weights.
+via `httpx.MockTransport` or a patched `fetch_search`, reranking is tested with a fake
+`Scorer`, and the LLM loop is tested with a fake chat client plus `httpx.MockTransport`, so the
+suite needs no network, no model weights, and no API key.
 
 ## Architecture
 
 ```
 src/bookshelf/
 ├── main.py            FastAPI app factory + lifespan DB init
-├── config.py          pydantic-settings (BOOKSHELF_* env vars)
+├── config.py          pydantic-settings (BOOKSHELF_* plus bare LLM_* names)
 ├── db.py              connections, pragmas, schema init
 ├── schema.sql         authors, books, library_entries, import_runs, remote_cache
 ├── models.py          Pydantic API models
 ├── repository.py      SQL queries
-├── services.py        shared business logic (API today, MCP/agent later)
+├── services.py        shared business logic (API, CLI, tools)
 ├── openlibrary.py     Open Library HTTP client + parsing
 ├── matching.py        title/author normalization for dedupe
 ├── rerank.py          lazy local cross-encoder scoring
 ├── discover.py        discovery CLI (same service layer as the API)
+├── tools.py           tool specs + handlers shared by the agent and MCP server
+├── llm.py             one OpenAI-compatible chat client for OpenAI and Ollama
+├── agent.py           tool-calling retrieval loop
+├── mcp_server.py      MCP stdio server exposing the tools
 ├── web.py             server-rendered HTML pages
 ├── api/               thin FastAPI adapters
 └── ingest/goodreads.py  CSV parser, upserts, CLI
 ```
 
 - API routes call `services.py`; only `repository.py` and the importer contain SQL.
-- `openlibrary.py` is the only module that makes outbound HTTP calls. `rerank.py` only downloads
-  a model from Hugging Face on first use; inference stays local.
+- `openlibrary.py` is the only module that makes Open Library calls; `llm.py` is the only module
+  that talks to an LLM provider. `rerank.py` only downloads a model from Hugging Face on first
+  use; inference stays local.
+- `agent.recommend` and `mcp_server` both go through `tools.call_tool`, so the tool set and its
+  privacy rules live in one place. Configure the provider with `LLM_PROVIDER`; no agent code is
+  provider-specific.
 - FastAPI endpoints are synchronous. `sqlite3` is synchronous too; `def` endpoints run in the
   threadpool. One connection per request, with foreign keys, WAL, and a busy timeout enabled.
 - `books` holds catalog metadata; `library_entries` holds personal status/rating/dates. Keeping
@@ -158,6 +252,7 @@ src/bookshelf/
 1. **M1 (done):** Goodreads import, SQLite, read-only FastAPI.
 2. **M2 (done):** Open Library search, metadata caching, dedupe, enrichment budget.
 3. **M3 (done):** Local cross-encoder reranking (`cross-encoder/ms-marco-MiniLM-L6-v2`).
-4. **M4:** MCP tools and the LLM-driven retrieval loop.
+4. **M4 (done):** MCP tools and the LLM-driven retrieval loop, with Ollama and OpenAI through
+   one client.
 5. **M5:** Docker, Langfuse tracing, sandbox only for dynamic analysis.
 6. **M6:** Retrieval evaluations and local-vs-hosted model comparison.

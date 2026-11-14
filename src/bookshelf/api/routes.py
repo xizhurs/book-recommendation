@@ -6,10 +6,19 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
-from .. import openlibrary, rerank, web
+from .. import agent, llm, openlibrary, rerank, web
 from ..config import Settings
 from ..db import schema_version
-from ..models import BookOut, BookPage, DiscoveryPage, HealthResponse, ReadingStatus, Stats
+from ..models import (
+    BookOut,
+    BookPage,
+    DiscoveryPage,
+    HealthResponse,
+    ReadingStatus,
+    Recommendation,
+    RecommendRequest,
+    Stats,
+)
 from ..services import discover as discover_service
 from ..services import get_book as get_book_service
 from ..services import get_stats as get_stats_service
@@ -91,6 +100,39 @@ def discover(
         )
     except openlibrary.OpenLibraryError as exc:
         raise HTTPException(status_code=502, detail="Open Library request failed") from exc
+
+
+@router.get("/ask", response_class=HTMLResponse, include_in_schema=False)
+def ask_page(
+    conn: DbConn,
+    settings: AppSettings,
+    q: str | None = Query(default=None, max_length=1000),
+) -> HTMLResponse:
+    result: Recommendation | None = None
+    error: str | None = None
+    if q and q.strip():
+        try:
+            result = agent.recommend(conn, query=q, settings=settings)
+        except llm.LLMError as exc:
+            error = f"Could not reach the LLM: {exc}"
+    return HTMLResponse(web.render_ask(query=q, result=result, error=error))
+
+
+@router.post("/recommend", response_model=Recommendation)
+def recommend(
+    conn: DbConn,
+    settings: AppSettings,
+    payload: RecommendRequest,
+) -> Recommendation:
+    try:
+        return agent.recommend(
+            conn,
+            query=payload.query,
+            settings=settings,
+            max_steps=payload.max_steps,
+        )
+    except llm.LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}") from exc
 
 
 @books_router.get("", response_model=BookPage)

@@ -8,6 +8,7 @@
 - `uv run python -m bookshelf.discover "query"` — discover via Open Library (cached, deduped,
   reranked). Flags: `--limit`, `--include-owned`, `--no-rerank`, `--json`, `--db PATH`.
 - `uv run uvicorn bookshelf.main:app --reload --host 127.0.0.1 --port 8000` — run the API.
+- `uv run python -m bookshelf.mcp_server` — run the MCP stdio server (same tools as the agent).
 - `uv run pytest` — full suite.
 - `uv run pytest tests/test_ingest_goodreads.py::test_import_report_counts` — single test.
 - `uv run ruff check . && uv run ruff format --check . && uv run mypy src` — checks.
@@ -34,6 +35,17 @@
   an injected scorer and reorders candidates before truncating to `limit`. Keep torch and
   sentence-transformers imports inside the lazy load so tests and non-rerank requests stay fast.
   Tests use a fake scorer; do not add tests that download model weights to the default run.
+- `tools.py` owns the tool specs and handlers (`search_library`, `library_stats`,
+  `discover_books`, `get_book`). Both `agent.py` and `mcp_server.py` call `tools.call_tool`; do
+  not duplicate tool logic or SQL in either. Tool results are JSON and must never include review
+  text — expose only `has_review`.
+- `llm.py` is one OpenAI-compatible `httpx` client used for both `LLM_PROVIDER=openai` and
+  `ollama` (Ollama serves `/v1/chat/completions`). Provider settings live in `LLMSettings` and
+  intentionally use bare env names (`LLM_PROVIDER`, `OPENAI_*`, `OLLAMA_*`); `Settings.llm` nests
+  them. Do not add provider-specific branches outside `llm.build_client`.
+- `agent.recommend` runs the bounded tool loop: at most `llm_max_steps` model turns, then one
+  final answer request. `POST /recommend` and `GET /ask` both call it. Tests inject a fake
+  `ChatClient`; LLM HTTP behaviour is tested with `httpx.MockTransport`.
 - Endpoints are synchronous `def` functions. `sqlite3` is synchronous; one connection per request.
   Do not introduce async SQLite or an ORM without a clear reason.
 - `books` stores catalog metadata; `library_entries` stores personal status, rating, and dates.
@@ -46,13 +58,18 @@
   log, or commit its contents. Use `tests/fixtures/goodreads_sample.csv` (fake data) in tests.
 - `.env` is gitignored; only `.env.example` is committed. The API binds to `127.0.0.1`.
 - Reviews are opt-in at import time; private notes are never imported. Do not add telemetry.
-  The only outbound calls are the Open Library search (search text only — never the library or
-  review contents) and the one-time cross-encoder download from Hugging Face (no personal data).
-  Discovery responses and models are cached locally, not uploaded anywhere.
-- Tests must use temporary databases and must not touch `data/`.
+  Outbound calls are: the Open Library search (search text only — never the library or review
+  contents), the one-time cross-encoder download from Hugging Face (no personal data), and LLM
+  chat requests. With `LLM_PROVIDER=ollama` LLM traffic stays on localhost. With
+  `LLM_PROVIDER=openai` the question and compact tool results (titles, authors, status, ratings —
+  never review text) go to OpenAI; document this and keep it opt-in. Discovery responses and
+  models are cached locally, not uploaded anywhere.
+- Tests must use temporary databases and must not touch `data/`. No test may call a real LLM,
+  OpenAI, Ollama, or Open Library; use fake clients, `httpx.MockTransport`, and temp DBs.
 
 ## Current scope
 
-M3: Open Library search with SQLite caching and dedupe, plus local cross-encoder reranking.
-Do not add MCP, agent code, Docker, or Langfuse until the matching milestone. Planned order:
-M4 MCP + LLM retrieval loop, M5 Docker/Langfuse/sandbox, M6 evaluations.
+M4 (done): MCP tools and the LLM-driven retrieval loop, with local Ollama and hosted OpenAI
+switchable through `LLM_PROVIDER` and one shared client. Do not add Docker, Langfuse, or
+sandboxes until M5, and keep evaluations for M6. Planned order: M5 Docker/Langfuse/sandbox,
+M6 evaluations.
