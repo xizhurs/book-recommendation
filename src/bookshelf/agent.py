@@ -10,7 +10,7 @@ import json
 import sqlite3
 from typing import Any
 
-from . import llm, tools
+from . import llm, tools, tracing
 from .config import Settings
 from .models import Recommendation, ToolCallRecord
 
@@ -41,11 +41,36 @@ def recommend(
     settings: Settings,
     client: llm.ChatClient | None = None,
     max_steps: int | None = None,
+    tracer: tracing.Tracer | None = None,
 ) -> Recommendation:
-    """Run the tool-calling loop until the model answers or the step budget runs out."""
+    """Run the tool-calling loop until the model answers or the step budget runs out.
+
+    When tracing is configured, the run is recorded as one ``recommend`` observation with a
+    generation per model turn and a tool observation per tool call.
+    """
     chat = client if client is not None else llm.build_client(settings.llm)
     budget = _clamp(max_steps if max_steps is not None else settings.llm.llm_max_steps, 1, 8)
+    tracer = tracer if tracer is not None else tracing.get_tracer(settings.tracing)
 
+    with tracer.observe(
+        "recommend",
+        as_type="agent",
+        input=query.strip(),
+        metadata={"provider": chat.provider, "model": chat.model, "max_steps": budget},
+    ) as root:
+        result = _run(conn, query, settings, chat, budget, tracer)
+        root.update(output=result.answer, metadata={"tool_calls": len(result.steps)})
+        return result
+
+
+def _run(
+    conn: sqlite3.Connection,
+    query: str,
+    settings: Settings,
+    chat: llm.ChatClient,
+    budget: int,
+    tracer: tracing.Tracer,
+) -> Recommendation:
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": query.strip()},
@@ -53,13 +78,15 @@ def recommend(
     steps: list[ToolCallRecord] = []
 
     for _ in range(budget):
-        response = chat.chat(messages, tools.tool_specs())
+        response = _chat(chat, tracer, messages, tools.tool_specs())
         if not response.tool_calls:
             return _result(response.content, chat, steps)
 
         messages.append(_assistant_message(response))
         for call in response.tool_calls:
-            result = tools.call_tool(conn, settings, call.name, call.arguments)
+            with tracer.observe("tool:" + call.name, as_type="tool", input=call.arguments) as span:
+                result = tools.call_tool(conn, settings, call.name, call.arguments)
+                span.update(output=result[:MAX_STEP_RECORD_CHARS])
             steps.append(
                 ToolCallRecord(
                     name=call.name,
@@ -69,8 +96,27 @@ def recommend(
             )
             messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
 
-    final = chat.chat(messages, tools=None)
+    final = _chat(chat, tracer, messages, None)
     return _result(final.content, chat, steps)
+
+
+def _chat(
+    chat: llm.ChatClient,
+    tracer: tracing.Tracer,
+    messages: list[dict[str, Any]],
+    tool_specs: list[dict[str, Any]] | None,
+) -> llm.ChatResponse:
+    with tracer.observe("chat", as_type="generation", input=messages, model=chat.model) as span:
+        response = chat.chat(messages, tool_specs)
+        span.update(
+            output={
+                "content": response.content,
+                "tool_calls": [
+                    {"name": call.name, "arguments": call.arguments} for call in response.tool_calls
+                ],
+            }
+        )
+        return response
 
 
 def _assistant_message(response: llm.ChatResponse) -> dict[str, Any]:

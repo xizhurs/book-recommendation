@@ -1,0 +1,31 @@
+# Local-only deployment. The port is published on 127.0.0.1 so the API is not reachable from
+# the network, and ./data (your real library and DB) is mounted, never copied into the image.
+services:
+  bookshelf:
+    build: .
+    image: bookshelf:local
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BOOKSHELF_DB_PATH: /data/bookshelf.db
+      # Ollama runs on the host, not in the container.
+      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/data
+      - models:/models
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  models:

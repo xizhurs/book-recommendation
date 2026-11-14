@@ -1,0 +1,16 @@
+.git
+.venv
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-wal
+*.db-shm
+goodreads_library_export*.csv
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+tests/
+.DS_Store

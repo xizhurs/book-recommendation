@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
 
-from . import agent, llm
+from . import agent, llm, tracing
 from .config import Settings
 from .db import connect, init_db
 from .models import Recommendation
@@ -95,6 +95,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except llm.LLMError as exc:
         print(f"LLM request failed: {exc}", file=sys.stderr)
         return 1
+    finally:
+        tracing.flush(settings.tracing)
 
     if args.json:
         print(result.model_dump_json(indent=2))

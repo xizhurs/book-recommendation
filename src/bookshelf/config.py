@@ -33,6 +33,34 @@ class LLMSettings(BaseSettings):
     llm_temperature: float = 0.2
 
 
+class TracingSettings(BaseSettings):
+    """Langfuse tracing: off unless both keys are set, or when ``LANGFUSE_TRACING_ENABLED=false``.
+
+    Bare ``LANGFUSE_*`` names are what the Langfuse docs use. When enabled, agent runs (the
+    question, tool arguments and results, model output) are sent to ``langfuse_base_url``.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: SecretStr | None = None
+    langfuse_base_url: str = "https://cloud.langfuse.com"
+    langfuse_tracing_enabled: bool = True
+
+    @property
+    def enabled(self) -> bool:
+        return (
+            self.langfuse_tracing_enabled
+            and bool(self.langfuse_public_key)
+            and self.langfuse_secret_key is not None
+            and bool(self.langfuse_secret_key.get_secret_value())
+        )
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -58,3 +86,4 @@ class Settings(BaseSettings):
 
     # M4: LLM provider for the recommendation loop (bare env names, see LLMSettings).
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    tracing: TracingSettings = Field(default_factory=TracingSettings)

@@ -16,6 +16,12 @@ from bookshelf.main import create_app
 SAMPLE_CSV = Path(__file__).parent / "fixtures" / "goodreads_sample.csv"
 
 
+@pytest.fixture(autouse=True)
+def _no_tracing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A developer's real LANGFUSE_* keys (env or .env) must never make tests send traces."""
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "false")
+
+
 @pytest.fixture
 def sample_csv() -> Path:
     return SAMPLE_CSV

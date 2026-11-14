@@ -147,6 +147,29 @@ uv run python -m bookshelf.ask "what next?" --json --db data/other.db
 Exit codes: `0` success, `1` the LLM request failed, `2` invalid arguments. Tool failures (for
 example Open Library being unreachable) are returned to the model rather than aborting the run.
 
+### Langfuse tracing (optional)
+
+Set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` in `.env` and every agent
+run (`/recommend`, `/ask`, `bookshelf.ask`) is recorded as one `recommend` trace with a
+`chat` generation per model turn and a `tool:<name>` observation per tool call.
+
+**Privacy:** a trace contains your question, the tool arguments and results (titles, authors,
+status, ratings; never review text) and the model's output, and it is sent to `LANGFUSE_BASE_URL`
+(Langfuse Cloud by default) even when `LLM_PROVIDER=ollama`. Leave the keys unset, or set
+`LANGFUSE_TRACING_ENABLED=false`, to send nothing. Tracing failures never fail a request.
+
+### Docker
+
+```bash
+docker compose up --build        # API on http://127.0.0.1:8000
+```
+
+The compose file publishes the port on `127.0.0.1` only, mounts `./data` (your DB is never copied
+into the image), reads `.env` at runtime, runs as a non-root user with a read-only filesystem and
+no capabilities, and caches the reranker model in a named volume. Ollama runs on the host: the
+container reaches it at `host.docker.internal:11434`. Import your CSV on the host as usual, or
+run `docker compose run --rm bookshelf python -m bookshelf.ingest.goodreads /data/<file>.csv`.
+
 ### Tools
 
 | Tool | Purpose |
@@ -288,5 +311,6 @@ src/bookshelf/
 3. **M3 (done):** Local cross-encoder reranking (`cross-encoder/ms-marco-MiniLM-L6-v2`).
 4. **M4 (done):** MCP tools and the LLM-driven retrieval loop, with Ollama and OpenAI through
    one client.
-5. **M5:** Docker, Langfuse tracing, sandbox only for dynamic analysis.
+5. **M5 (done, sandbox deferred):** Docker and Langfuse tracing. The sandbox for dynamic
+   analysis is deferred because nothing executes model-written code yet.
 6. **M6:** Retrieval evaluations and local-vs-hosted model comparison.
