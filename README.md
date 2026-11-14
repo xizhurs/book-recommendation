@@ -71,6 +71,7 @@ Open Library, <http://127.0.0.1:8000/ask> to ask for recommendations, or
 | `POST /recommend` | LLM recommendation. JSON: `{"query": "...", "max_steps": 4}` |
 | `GET /ask` | HTML page running the same loop as `/recommend`, server-rendered |
 | `POST /ask/clear?session_id=` | Delete a session's conversation memory (used by the `/ask` page) |
+| `POST /shutdown` | Stops the server (the **Stop app** button in the page header); refuses cross-origin browser requests; disable with `BOOKSHELF_ALLOW_SHUTDOWN=false` |
 
 `status` is one of `read`, `currently_reading`, or `to_read`.
 
@@ -184,6 +185,8 @@ status, ratings; never review text) and the model's output, and it is sent to `L
 `LANGFUSE_TRACING_ENABLED=false`, to send nothing. Tracing failures never fail a request.
 
 ### Docker
+
+The **Stop app** button exits the server process, but the compose service uses `restart: unless-stopped`, so Docker starts it again. Use `docker compose stop` to stop it for good.
 
 Every command below is run from the repo root. `docker compose` is the easy path; `docker run`
 is the same thing spelled out.

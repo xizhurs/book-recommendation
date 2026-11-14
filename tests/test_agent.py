@@ -170,3 +170,8 @@ def test_settings_supply_the_default_budget(
 def test_system_prompt_asks_for_up_to_five_formatted_suggestions() -> None:
     assert "up to 5 confirmed books" in agent.SYSTEM_PROMPT
     assert "**Title** by Author" in agent.SYSTEM_PROMPT
+
+
+def test_system_prompt_learns_taste_before_open_ended_recommendations() -> None:
+    assert "learn the reader's taste" in agent.SYSTEM_PROMPT
+    assert "min_rating 4" in agent.SYSTEM_PROMPT

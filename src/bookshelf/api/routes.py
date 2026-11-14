@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import multiprocessing
+import os
 import re
+import signal
 import sqlite3
+import time
 from typing import Annotated, Literal
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .. import agent, llm, openlibrary, rerank, web
@@ -235,3 +239,29 @@ def get_book(book_id: int, conn: DbConn) -> BookOut:
     if book is None:
         raise HTTPException(status_code=404, detail="Book not found")
     return book
+
+
+def _request_shutdown() -> None:
+    """Ask this server process to exit (runs after the response has been sent)."""
+    time.sleep(0.3)
+    # Under `uvicorn --reload` this process is a multiprocessing child of the reloader, which
+    # would otherwise keep running; without --reload there is no such parent (never signal a
+    # shell). Interrupting both is the same as pressing Ctrl+C.
+    parent = multiprocessing.parent_process()
+    if parent is not None and parent.pid is not None:
+        os.kill(parent.pid, signal.SIGINT)
+    os.kill(os.getpid(), signal.SIGINT)
+
+
+@router.post("/shutdown", response_class=HTMLResponse, include_in_schema=False)
+def shutdown(request: Request, background: BackgroundTasks, settings: AppSettings) -> HTMLResponse:
+    if not settings.allow_shutdown:
+        raise HTTPException(status_code=404)
+    # Any web page can POST to 127.0.0.1, so refuse browser requests from another origin.
+    origin = request.headers.get("origin")
+    if origin and urlparse(origin).netloc != request.headers.get("host"):
+        raise HTTPException(status_code=403, detail="Cross-origin request refused")
+    if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
+        raise HTTPException(status_code=403, detail="Cross-origin request refused")
+    background.add_task(_request_shutdown)
+    return HTMLResponse(web.render_stopped())

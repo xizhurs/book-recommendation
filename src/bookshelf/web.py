@@ -120,7 +120,9 @@ details p { margin: 6px 0 0; color: var(--muted); }
   display: block; margin-top: 12px; font-size: 0.8rem; color: var(--ink);
   word-break: break-all;
 }
-nav { display: flex; gap: 16px; font-size: 0.9rem; }
+nav { display: flex; gap: 16px; font-size: 0.9rem; align-items: center; }
+nav .stop { margin-left: auto; }
+nav .stop button { padding: 4px 10px; font-size: 0.8rem; }
 nav a { color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; }
 nav a:hover { color: var(--ink); border-bottom-color: var(--line); }
 nav a[aria-current="page"] { color: var(--accent); border-bottom-color: currentColor; }
@@ -248,7 +250,42 @@ def _nav(current: str) -> str:
     for href, label in links:
         current_attr = ' aria-current="page"' if href == current else ""
         parts.append(f'<a href="{href}"{current_attr}>{label}</a>')
-    return "<nav>" + "".join(parts) + "</nav>"
+    stop = (
+        '<form method="post" action="/shutdown" class="stop" '
+        "onsubmit=\"return confirm('Stop the AI Bookshelf server?')\">"
+        '<button type="submit" class="secondary" title="Stop the server">Stop app</button></form>'
+    )
+    return "<nav>" + "".join(parts) + stop + "</nav>"
+
+
+def render_stopped() -> str:
+    return _shell_bare(
+        title="Stopped · AI Bookshelf",
+        content=(
+            '<div class="empty"><p>AI Bookshelf has stopped.</p>'
+            '<p class="muted">Start it again with <code>uv run uvicorn bookshelf.main:app '
+            "--host 127.0.0.1 --port 8000</code>. You can close this tab.</p></div>"
+        ),
+    )
+
+
+def _shell_bare(*, title: str, content: str) -> str:
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{escape(title)}</title>
+<style>{_STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+<header><h1>AI Bookshelf</h1></header>
+{content}
+</div>
+</body>
+</html>
+"""
 
 
 def _shell(*, title: str, current: str, content: str) -> str:

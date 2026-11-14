@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     db_path: Path = Path("data/bookshelf.db")
     api_host: str = "127.0.0.1"
     api_port: int = 8000
+    # Lets the web UI's Stop button end the server process; set false to disable the endpoint.
+    allow_shutdown: bool = True
 
     # M2: Open Library discovery. Responses are cached in SQLite and every search is
     # capped by a request budget so a bug or a clicked-again page cannot hammer the API.
