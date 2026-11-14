@@ -157,6 +157,8 @@ example Open Library being unreachable) are returned to the model rather than ab
 | `get_book` | One library book by numeric id |
 
 Tool output is compact JSON. It never includes review text — only `has_review`.
+`search_library` falls back to typo-tolerant matching when an exact substring search finds nothing;
+such results carry `"fuzzy": true` and a note, and respect the status/rating filters.
 
 ### Choose a provider
 

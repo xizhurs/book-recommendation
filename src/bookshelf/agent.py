@@ -20,6 +20,8 @@ SYSTEM_PROMPT = (
     "- Use search_library to understand what the reader owns, likes, and has read.\n"
     "- Use discover_books to suggest titles they do not own; never invent titles or authors.\n"
     "- Use library_stats for overview questions and get_book to look up one id.\n"
+    "- If a search returns nothing, retry once with a corrected spelling; results marked "
+    "fuzzy are near matches for a misspelled query, so say which title you assumed.\n"
     "- Review text is private and unavailable; do not ask for it or claim to have read it.\n"
     "- Keep the final answer short: a few suggestions, each with one line of reasoning."
 )

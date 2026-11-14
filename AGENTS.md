@@ -38,7 +38,8 @@
   sentence-transformers imports inside the lazy load so tests and non-rerank requests stay fast.
   Tests use a fake scorer; do not add tests that download model weights to the default run.
 - `tools.py` owns the tool specs and handlers (`search_library`, `library_stats`,
-  `discover_books`, `get_book`). Both `agent.py` and `mcp_server.py` call `tools.call_tool`; do
+  `discover_books`, `get_book`; `search_library` falls back to `matching.fuzzy_score` typo
+  matching when `LIKE` finds nothing). Both `agent.py` and `mcp_server.py` call `tools.call_tool`; do
   not duplicate tool logic or SQL in either. Tool results are JSON and must never include review
   text — expose only `has_review`.
 - `llm.py` is one OpenAI-compatible `httpx` client used for both `LLM_PROVIDER=openai` and

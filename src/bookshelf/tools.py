@@ -14,7 +14,7 @@ from typing import Any
 from . import rerank
 from .config import Settings
 from .models import BookOut, ReadingStatus
-from .services import discover, get_book, get_stats, list_books
+from .services import discover, fuzzy_search_books, get_book, get_stats, list_books
 
 MAX_SEARCH_LIMIT = 25
 MAX_DISCOVER_LIMIT = 15
@@ -148,13 +148,25 @@ def _search_library(
     limit = _int_argument(arguments.get("limit"), default=10) or 10
     limit = max(1, min(MAX_SEARCH_LIMIT, limit))
 
+    query = _str_argument(arguments.get("query"))
     books, total = list_books(
         conn,
-        q=_str_argument(arguments.get("query")),
+        q=query,
         status=status,
         min_rating=min_rating,
         limit=limit,
     )
+    if total == 0 and query:
+        similar = fuzzy_search_books(
+            conn, q=query, status=status, min_rating=min_rating, limit=limit
+        )
+        if similar:
+            return {
+                "total": len(similar),
+                "books": [_book_summary(book) for book in similar],
+                "fuzzy": True,
+                "note": f"No exact match for {query!r}; these are the closest spellings.",
+            }
     return {"total": total, "books": [_book_summary(book) for book in books]}
 
 

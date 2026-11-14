@@ -31,6 +31,19 @@ def list_books(
     )
 
 
+def fuzzy_search_books(
+    conn: sqlite3.Connection,
+    *,
+    q: str,
+    status: ReadingStatus | None = None,
+    min_rating: int | None = None,
+    limit: int = 10,
+) -> list[BookOut]:
+    return repository.fuzzy_search_books(
+        conn, q=q, status=status, min_rating=min_rating, limit=limit
+    )
+
+
 def get_book(conn: sqlite3.Connection, book_id: int) -> BookOut | None:
     return repository.get_book(conn, book_id)
 
