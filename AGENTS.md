@@ -7,6 +7,8 @@
   Add `--include-reviews` only when review text is wanted; add `--db PATH` to override the DB.
 - `uv run python -m bookshelf.discover "query"` — discover via Open Library (cached, deduped,
   reranked). Flags: `--limit`, `--include-owned`, `--no-rerank`, `--json`, `--db PATH`.
+- `uv run python -m bookshelf.ask "query"` — ask the agent (same loop as `/recommend`).
+  Flags: `--max-steps`, `--steps`, `--no-rerank`, `--json`, `--db PATH`.
 - `uv run uvicorn bookshelf.main:app --reload --host 127.0.0.1 --port 8000` — run the API.
 - `uv run python -m bookshelf.mcp_server` — run the MCP stdio server (same tools as the agent).
 - `uv run pytest` — full suite.
@@ -44,8 +46,8 @@
   intentionally use bare env names (`LLM_PROVIDER`, `OPENAI_*`, `OLLAMA_*`); `Settings.llm` nests
   them. Do not add provider-specific branches outside `llm.build_client`.
 - `agent.recommend` runs the bounded tool loop: at most `llm_max_steps` model turns, then one
-  final answer request. `POST /recommend` and `GET /ask` both call it. Tests inject a fake
-  `ChatClient`; LLM HTTP behaviour is tested with `httpx.MockTransport`.
+  final answer request. `POST /recommend`, `GET /ask`, and the `bookshelf.ask` CLI all call it.
+  Tests inject a fake `ChatClient`; LLM HTTP behaviour is tested with `httpx.MockTransport`.
 - Endpoints are synchronous `def` functions. `sqlite3` is synchronous; one connection per request.
   Do not introduce async SQLite or an ORM without a clear reason.
 - `books` stores catalog metadata; `library_entries` stores personal status, rating, and dates.

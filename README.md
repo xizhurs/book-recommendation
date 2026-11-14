@@ -168,6 +168,22 @@ OPENAI_BASE_URL=https://api.openai.com/v1
   default tool-call budget.
 - Errors from the provider return `502` with a short message; the `/ask` page shows it inline.
 
+### Ask from the CLI
+
+The same `agent.recommend` loop runs without the server:
+
+```bash
+uv run python -m bookshelf.ask "What should I read after Dune?"
+uv run python -m bookshelf.ask "Which unread book should I start?" --steps
+uv run python -m bookshelf.ask "Cozy fantasy?" --max-steps 2 --no-rerank
+uv run python -m bookshelf.ask "Recommend something" --json
+uv run python -m bookshelf.ask "What next?" --db data/other.db
+```
+
+`--steps` prints each tool call and result before the answer; `--json` prints the full
+`Recommendation`; `--no-rerank` skips the local cross-encoder in `discover_books` calls. Exit
+codes: `0` ok, `1` LLM failure, `2` bad arguments.
+
 ### MCP server
 
 The same four tools are exposed over MCP stdio, so an MCP client can use them without the API:
@@ -227,6 +243,7 @@ src/bookshelf/
 ├── tools.py           tool specs + handlers shared by the agent and MCP server
 ├── llm.py             one OpenAI-compatible chat client for OpenAI and Ollama
 ├── agent.py           tool-calling retrieval loop
+├── ask.py             ask CLI (same loop as /recommend and /ask)
 ├── mcp_server.py      MCP stdio server exposing the tools
 ├── web.py             server-rendered HTML pages
 ├── api/               thin FastAPI adapters
