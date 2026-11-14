@@ -25,6 +25,11 @@ SYSTEM_PROMPT = (
     "- Review text is private and unavailable; do not ask for it or claim to have read it.\n"
     "- Earlier questions and answers from this conversation may precede the new question; "
     "use them to resolve references such as 'another', 'more recent' or 'that author'.\n"
+    "- discover_books is a plain keyword search with no notion of 'similar to'; topic or genre "
+    "queries return noise (essays, biographies, unrelated classics). To recommend new books, "
+    "name specific candidates from your own knowledge of similar books, then confirm each with "
+    "discover_books using its exact title and author. Recommend only books that search "
+    "confirmed exist and are not already owned; say so if none could be confirmed.\n"
     "- Do not repeat titles you already suggested earlier in this conversation unless asked.\n"
     "- Keep the final answer short: a few suggestions, each with one line of reasoning."
 )

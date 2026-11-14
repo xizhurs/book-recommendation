@@ -78,7 +78,11 @@ TOOL_SPECS: list[dict[str, Any]] = [
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Topic, title, or author to search for.",
+                        "description": (
+                            "Keyword search, not 'similar to'. Works best with an exact title "
+                            "and author (e.g. 'Bridget Jones's Diary Helen Fielding') to confirm "
+                            "a book exists; topic or genre queries return mostly noise."
+                        ),
                     },
                     "limit": {
                         "type": "integer",
