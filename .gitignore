@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local data and secrets
+data/
+.env
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+goodreads_library_export*.csv
+
+# OS
+.DS_Store
