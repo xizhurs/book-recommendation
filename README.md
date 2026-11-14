@@ -95,6 +95,20 @@ scoring each candidate's `Title — Author (year)` against the query and keeping
   `BOOKSHELF_RERANK_MODEL` selects a different cross-encoder.
 - Responses include `"reranked": true/false`; the `/find` page shows it in the result summary.
 
+## Discover from the CLI
+
+The same pipeline (cache, dedupe, rerank) runs without the server:
+
+```bash
+uv run python -m bookshelf.discover "dune frank herbert" --limit 5
+uv run python -m bookshelf.discover "cozy fantasy" --no-rerank      # Open Library order
+uv run python -m bookshelf.discover "cozy fantasy" --json            # full response
+uv run python -m bookshelf.discover "dune" --db data/other.db --include-owned
+```
+
+The first rerank downloads the model; later runs print `cached · reranked` in the summary.
+
+
 ## Tests and checks
 
 ```bash
@@ -123,6 +137,7 @@ src/bookshelf/
 ├── openlibrary.py     Open Library HTTP client + parsing
 ├── matching.py        title/author normalization for dedupe
 ├── rerank.py          lazy local cross-encoder scoring
+├── discover.py        discovery CLI (same service layer as the API)
 ├── web.py             server-rendered HTML pages
 ├── api/               thin FastAPI adapters
 └── ingest/goodreads.py  CSV parser, upserts, CLI

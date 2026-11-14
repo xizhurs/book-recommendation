@@ -5,6 +5,8 @@
 - `uv sync` — install Python 3.12 (pinned in `.python-version`) and dependencies.
 - `uv run python -m bookshelf.ingest.goodreads data/goodreads_library_export.csv` — import.
   Add `--include-reviews` only when review text is wanted; add `--db PATH` to override the DB.
+- `uv run python -m bookshelf.discover "query"` — discover via Open Library (cached, deduped,
+  reranked). Flags: `--limit`, `--include-owned`, `--no-rerank`, `--json`, `--db PATH`.
 - `uv run uvicorn bookshelf.main:app --reload --host 127.0.0.1 --port 8000` — run the API.
 - `uv run pytest` — full suite.
 - `uv run pytest tests/test_ingest_goodreads.py::test_import_report_counts` — single test.
@@ -17,6 +19,8 @@
 - `ingest/goodreads.py` is both the importer and its CLI. Re-imports are idempotent by Goodreads
   `Book Id`; duplicate CSV rows are skipped and existing reviews survive re-import without
   `--include-reviews`.
+- `discover.py` is the discovery CLI. It must call `services.discover` rather than duplicating
+  cache, dedupe, or rerank logic.
 - `db.py` opens SQLite with foreign keys, WAL, and a busy timeout. `schema.sql` is applied
   idempotently by `db.init_db()` in the FastAPI lifespan. Schema version is `PRAGMA user_version`
   (currently 2); there is no migration framework yet, so new tables must be `CREATE ... IF NOT
