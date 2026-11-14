@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from html import escape
 
-from .models import BookOut, ReadingStatus, Stats
+from .models import BookOut, DiscoveryItem, DiscoveryPage, ReadingStatus, Stats
 
 _IMPORT_HINT = "uv run python -m bookshelf.ingest.goodreads data/goodreads_library_export.csv"
 
@@ -117,6 +117,15 @@ details p { margin: 6px 0 0; color: var(--muted); }
   display: block; margin-top: 12px; font-size: 0.8rem; color: var(--ink);
   word-break: break-all;
 }
+nav { display: flex; gap: 16px; font-size: 0.9rem; }
+nav a { color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; }
+nav a:hover { color: var(--ink); border-bottom-color: var(--line); }
+nav a[aria-current="page"] { color: var(--accent); border-bottom-color: currentColor; }
+.cover {
+  width: 100%; height: 150px; object-fit: cover; border-radius: 10px;
+  background: var(--line); margin-bottom: 6px;
+}
+.badge-owned { background: #e5eaf4; color: var(--to-read); }
 """
 
 
@@ -201,6 +210,37 @@ def _book_count(total: int) -> str:
     return f"{total} book" if total == 1 else f"{total} books"
 
 
+def _nav(current: str) -> str:
+    links = (("/", "Library"), ("/find", "Find books"), ("/docs", "API docs"))
+    parts: list[str] = []
+    for href, label in links:
+        current_attr = ' aria-current="page"' if href == current else ""
+        parts.append(f'<a href="{href}"{current_attr}>{label}</a>')
+    return "<nav>" + "".join(parts) + "</nav>"
+
+
+def _shell(*, title: str, current: str, content: str) -> str:
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{escape(title)}</title>
+<style>{_STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<h1>AI Bookshelf</h1>
+{_nav(current)}
+</header>
+{content}
+</div>
+</body>
+</html>
+"""
+
+
 def render_index(
     *,
     stats: Stats,
@@ -217,21 +257,7 @@ def render_index(
         body = f'<ul class="grid">{cards}</ul>'
     results = f'<p class="results">Showing {len(books)} of {_book_count(total)}</p>'
     reset = '<a class="reset" href="/">Reset</a>' if filtered else ""
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Bookshelf</title>
-<style>{_STYLE}</style>
-</head>
-<body>
-<div class="wrap">
-<header>
-<h1>AI Bookshelf</h1>
-<a class="docs" href="/docs">API docs</a>
-</header>
-<p class="sub">Your local reading history, served from SQLite.</p>
+    content = f"""<p class="sub">Your local reading history, served from SQLite.</p>
 {_stats_bar(stats)}
 <form class="filters" method="get" action="/">
 <input type="search" name="q" value="{escape(q or "")}" placeholder="Search title or author"
@@ -241,8 +267,75 @@ def render_index(
 {reset}
 </form>
 {results}
-{body}
-</div>
-</body>
-</html>
-"""
+{body}"""
+    return _shell(title="AI Bookshelf", current="/", content=content)
+
+
+def _discover_card(item: DiscoveryItem) -> str:
+    details: list[str] = []
+    if item.first_publish_year is not None:
+        details.append(str(item.first_publish_year))
+    if item.edition_count:
+        details.append(f"{item.edition_count} editions")
+    if item.isbn13:
+        details.append(f"ISBN {item.isbn13}")
+    meta = f'<span class="muted">{escape(" · ".join(details))}</span>' if details else ""
+    owned = '<span class="pill badge-owned">In your library</span>' if item.in_library else ""
+    cover = (
+        f'<img class="cover" src="{escape(item.cover_url, quote=True)}" alt="" loading="lazy">'
+        if item.cover_url
+        else ""
+    )
+    link = f"https://openlibrary.org{escape(item.openlibrary_key, quote=True)}"
+    return (
+        f'<li class="card">{cover}'
+        f'<div class="row">{owned}{meta}</div>'
+        f"<h2>{escape(item.title)}</h2>"
+        f'<p class="author">{escape(item.author or "Unknown author")}</p>'
+        f'<a class="docs" href="{escape(link, quote=True)}" target="_blank" rel="noopener">'
+        "View on Open Library</a>"
+        "</li>"
+    )
+
+
+def render_discover(
+    *,
+    query: str | None,
+    page: DiscoveryPage | None,
+    error: str | None,
+) -> str:
+    if error is not None:
+        meta = ""
+        body = f'<div class="empty"><p>{escape(error)}</p></div>'
+    elif page is None:
+        meta = ""
+        body = (
+            '<div class="empty">'
+            "<p>Search Open Library for books that are not on your shelf yet.</p>"
+            '<p class="muted">Only the search text is sent; your library stays local.</p></div>'
+        )
+    else:
+        if page.items:
+            cards = "".join(_discover_card(item) for item in page.items)
+            body = f'<ul class="grid">{cards}</ul>'
+        else:
+            reason = (
+                "Everything matching that search is already in your library."
+                if page.skipped_owned
+                else "Open Library returned no matches."
+            )
+            body = f'<div class="empty"><p>{reason}</p></div>'
+        source = "cached" if page.cached else "fresh"
+        meta = (
+            f'<p class="results">{page.total_found} found · '
+            f"{page.skipped_owned} already in your library · {source}</p>"
+        )
+    content = f"""<p class="sub">Find something new. Results are cached locally for a day.</p>
+<form class="filters" method="get" action="/find">
+<input type="search" name="q" value="{escape(query or "")}" placeholder="Title, author, or topic"
+ aria-label="Search Open Library" maxlength="200">
+<button type="submit">Search</button>
+</form>
+{meta}
+{body}"""
+    return _shell(title="Find books · AI Bookshelf", current="/find", content=content)

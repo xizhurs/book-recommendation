@@ -55,3 +55,14 @@ CREATE INDEX IF NOT EXISTS idx_books_isbn10 ON books (isbn10);
 CREATE INDEX IF NOT EXISTS idx_books_isbn13 ON books (isbn13);
 CREATE INDEX IF NOT EXISTS idx_library_entries_status ON library_entries (status);
 CREATE INDEX IF NOT EXISTS idx_library_entries_rating ON library_entries (rating);
+
+CREATE TABLE IF NOT EXISTS remote_cache (
+    source TEXT NOT NULL,
+    cache_key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY (source, cache_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_remote_cache_expires ON remote_cache (expires_at);

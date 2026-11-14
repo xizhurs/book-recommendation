@@ -7,7 +7,7 @@ def test_health(client: TestClient) -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "schema_version": 1}
+    assert response.json() == {"status": "ok", "schema_version": 2}
 
 
 def test_list_books(imported_client: TestClient) -> None:

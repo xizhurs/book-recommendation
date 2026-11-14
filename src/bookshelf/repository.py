@@ -4,6 +4,7 @@ import sqlite3
 from collections import Counter
 from datetime import date
 
+from .matching import title_author_key
 from .models import AuthorCount, BookOut, ReadingStatus, ShelfCount, Stats
 
 BOOK_COLUMNS = """
@@ -119,6 +120,61 @@ def get_book(conn: sqlite3.Connection, book_id: int) -> BookOut | None:
         (book_id,),
     ).fetchone()
     return _row_to_book(row) if row is not None else None
+
+
+def library_identity(conn: sqlite3.Connection) -> tuple[set[str], set[tuple[str, str]]]:
+    """ISBNs and normalized (title, author) keys already present in the library."""
+    isbns: set[str] = set()
+    titles: set[tuple[str, str]] = set()
+    for row in conn.execute(
+        """
+        SELECT b.isbn10, b.isbn13, b.title, a.name AS author
+        FROM books AS b
+        JOIN authors AS a ON a.id = b.author_id
+        """
+    ):
+        for column in ("isbn10", "isbn13"):
+            if row[column]:
+                isbns.add(str(row[column]))
+        titles.add(title_author_key(row["title"], row["author"]))
+    return isbns, titles
+
+
+def get_cached_payload(
+    conn: sqlite3.Connection, *, source: str, cache_key: str, now: str
+) -> str | None:
+    row = conn.execute(
+        """
+        SELECT payload FROM remote_cache
+        WHERE source = ? AND cache_key = ? AND expires_at > ?
+        """,
+        (source, cache_key, now),
+    ).fetchone()
+    return str(row["payload"]) if row is not None else None
+
+
+def store_cached_payload(
+    conn: sqlite3.Connection,
+    *,
+    source: str,
+    cache_key: str,
+    payload: str,
+    fetched_at: str,
+    expires_at: str,
+) -> None:
+    conn.execute("DELETE FROM remote_cache WHERE expires_at <= ?", (fetched_at,))
+    conn.execute(
+        """
+        INSERT INTO remote_cache (source, cache_key, payload, fetched_at, expires_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (source, cache_key) DO UPDATE SET
+            payload = excluded.payload,
+            fetched_at = excluded.fetched_at,
+            expires_at = excluded.expires_at
+        """,
+        (source, cache_key, payload, fetched_at, expires_at),
+    )
+    conn.commit()
 
 
 def get_stats(conn: sqlite3.Connection) -> Stats:

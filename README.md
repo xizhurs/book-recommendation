@@ -2,9 +2,9 @@
 
 Local-first reading history and, eventually, agentic book discovery.
 
-**Current status: M1.** Import a Goodreads CSV export into SQLite and browse it through a
-read-only FastAPI API. Discovery, cross-encoder reranking, MCP, and the agent come in later
-milestones.
+**Current status: M2.** Import a Goodreads CSV into SQLite, browse it through a read-only
+FastAPI API or the local web pages, and search Open Library for books you do not own yet.
+Reranking, MCP, and the agent come in later milestones.
 
 ## Privacy first
 
@@ -12,6 +12,8 @@ milestones.
 - The API binds to `127.0.0.1` by default. Do not expose it publicly.
 - Reviews are **not** imported unless you pass `--include-reviews`.
 - `.env` is gitignored; only `.env.example` is committed.
+- Open Library searches send only the search text. Your library and reviews never leave the
+  machine; responses are cached locally in SQLite.
 - Tests use `tests/fixtures/goodreads_sample.csv`, which contains fake books. Never copy real
   reading data into fixtures.
 
@@ -50,7 +52,8 @@ inside the CSV are skipped, and existing reviews are preserved when re-importing
 uv run uvicorn bookshelf.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Open <http://127.0.0.1:8000/docs> for the interactive API docs.
+Open <http://127.0.0.1:8000/> for the bookshelf UI, <http://127.0.0.1:8000/find> to search
+Open Library, or <http://127.0.0.1:8000/docs> for the interactive API docs.
 
 | Endpoint | Description |
 |---|---|
@@ -58,8 +61,24 @@ Open <http://127.0.0.1:8000/docs> for the interactive API docs.
 | `GET /books` | List/filter books. Params: `q`, `status`, `min_rating`, `limit`, `offset` |
 | `GET /books/{id}` | One book and its reading entry |
 | `GET /stats` | Counts by status, rating histogram, top authors/shelves |
+| `GET /discover` | Open Library search. Params: `q` (required), `limit`, `include_owned` |
 
 `status` is one of `read`, `currently_reading`, or `to_read`.
+
+## Discover books
+
+`GET /discover?q=...` queries Open Library's search API and drops anything already in your
+library, matching by ISBN first and then by normalized title + author.
+
+- Results are cached in the `remote_cache` table for `BOOKSHELF_OPENLIBRARY_CACHE_TTL_SECONDS`
+  (default one day), so repeated searches make no network calls. Responses report `cached` and
+  `requests_used`.
+- Each call may make at most `BOOKSHELF_OPENLIBRARY_MAX_REQUESTS` outbound requests (default 3).
+  Set it to `0` for a strictly offline mode: the endpoint then only reads the cache.
+- Override the host with `BOOKSHELF_OPENLIBRARY_BASE_URL` and the timeout with
+  `BOOKSHELF_OPENLIBRARY_TIMEOUT_SECONDS`.
+- Only the search text is sent to Open Library. `include_owned=true` also returns books you
+  already have, flagged with `in_library`.
 
 ## Tests and checks
 
@@ -71,7 +90,8 @@ uv run ruff format --check .
 uv run mypy src
 ```
 
-Tests create a temporary SQLite database and never touch `data/`.
+Tests create a temporary SQLite database and never touch `data/`. Open Library is always mocked
+via `httpx.MockTransport` or a patched `fetch_search`, so the suite needs no network.
 
 ## Architecture
 
@@ -80,15 +100,19 @@ src/bookshelf/
 ├── main.py            FastAPI app factory + lifespan DB init
 ├── config.py          pydantic-settings (BOOKSHELF_* env vars)
 ├── db.py              connections, pragmas, schema init
-├── schema.sql         authors, books, library_entries, import_runs
+├── schema.sql         authors, books, library_entries, import_runs, remote_cache
 ├── models.py          Pydantic API models
 ├── repository.py      SQL queries
 ├── services.py        shared business logic (API today, MCP/agent later)
+├── openlibrary.py     Open Library HTTP client + parsing
+├── matching.py        title/author normalization for dedupe
+├── web.py             server-rendered HTML pages
 ├── api/               thin FastAPI adapters
 └── ingest/goodreads.py  CSV parser, upserts, CLI
 ```
 
 - API routes call `services.py`; only `repository.py` and the importer contain SQL.
+- `openlibrary.py` is the only module that makes outbound HTTP calls.
 - FastAPI endpoints are synchronous. `sqlite3` is synchronous too; `def` endpoints run in the
   threadpool. One connection per request, with foreign keys, WAL, and a busy timeout enabled.
 - `books` holds catalog metadata; `library_entries` holds personal status/rating/dates. Keeping
@@ -99,7 +123,7 @@ src/bookshelf/
 ## Roadmap
 
 1. **M1 (done):** Goodreads import, SQLite, read-only FastAPI.
-2. **M2:** Open Library search, metadata caching, dedupe, enrichment budget.
+2. **M2 (done):** Open Library search, metadata caching, dedupe, enrichment budget.
 3. **M3:** Local cross-encoder reranking (`cross-encoder/ms-marco-MiniLM-L6-v2`).
 4. **M4:** MCP tools and the LLM-driven retrieval loop.
 5. **M5:** Docker, Langfuse tracing, sandbox only for dynamic analysis.

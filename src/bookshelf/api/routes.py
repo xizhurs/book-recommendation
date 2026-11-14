@@ -6,15 +6,18 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
-from .. import web
+from .. import openlibrary, web
+from ..config import Settings
 from ..db import schema_version
-from ..models import BookOut, BookPage, HealthResponse, ReadingStatus, Stats
+from ..models import BookOut, BookPage, DiscoveryPage, HealthResponse, ReadingStatus, Stats
+from ..services import discover as discover_service
 from ..services import get_book as get_book_service
 from ..services import get_stats as get_stats_service
 from ..services import list_books as list_books_service
-from .deps import get_db
+from .deps import get_db, get_settings
 
 DbConn = Annotated[sqlite3.Connection, Depends(get_db)]
+AppSettings = Annotated[Settings, Depends(get_settings)]
 
 router = APIRouter()
 books_router = APIRouter(prefix="/books", tags=["books"])
@@ -40,6 +43,42 @@ def health(conn: DbConn) -> HealthResponse:
 @router.get("/stats", response_model=Stats)
 def stats(conn: DbConn) -> Stats:
     return get_stats_service(conn)
+
+
+@router.get("/find", response_class=HTMLResponse, include_in_schema=False)
+def find_books(
+    conn: DbConn,
+    settings: AppSettings,
+    q: str | None = Query(default=None, max_length=200),
+) -> HTMLResponse:
+    page: DiscoveryPage | None = None
+    error: str | None = None
+    if q and q.strip():
+        try:
+            page = discover_service(conn, query=q, limit=12, include_owned=False, settings=settings)
+        except openlibrary.OpenLibraryError:
+            error = "Open Library could not be reached. Try again in a moment."
+    return HTMLResponse(web.render_discover(query=q, page=page, error=error))
+
+
+@router.get("/discover", response_model=DiscoveryPage)
+def discover(
+    conn: DbConn,
+    settings: AppSettings,
+    q: str = Query(min_length=1, max_length=200),
+    limit: int = Query(default=10, ge=1, le=25),
+    include_owned: bool = False,
+) -> DiscoveryPage:
+    try:
+        return discover_service(
+            conn,
+            query=q,
+            limit=limit,
+            include_owned=include_owned,
+            settings=settings,
+        )
+    except openlibrary.OpenLibraryError as exc:
+        raise HTTPException(status_code=502, detail="Open Library request failed") from exc
 
 
 @books_router.get("", response_model=BookPage)

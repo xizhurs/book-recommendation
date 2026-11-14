@@ -60,6 +60,26 @@ class Stats(BaseModel):
     top_shelves: list[ShelfCount] = Field(default_factory=list)
 
 
+class DiscoveryItem(BaseModel):
+    openlibrary_key: str
+    title: str
+    author: str | None = None
+    first_publish_year: int | None = None
+    isbn13: str | None = None
+    cover_url: str | None = None
+    edition_count: int = 0
+    in_library: bool = False
+
+
+class DiscoveryPage(BaseModel):
+    query: str
+    items: list[DiscoveryItem]
+    total_found: int
+    skipped_owned: int
+    cached: bool
+    requests_used: int
+
+
 class HealthResponse(BaseModel):
     status: str
     schema_version: int
