@@ -2,9 +2,9 @@
 
 Local-first reading history and, eventually, agentic book discovery.
 
-**Current status: M2.** Import a Goodreads CSV into SQLite, browse it through a read-only
-FastAPI API or the local web pages, and search Open Library for books you do not own yet.
-Reranking, MCP, and the agent come in later milestones.
+**Current status: M3.** Import a Goodreads CSV into SQLite, browse it through a read-only
+FastAPI API or the local web pages, search Open Library for books you do not own yet, and
+rerank those results with a local cross-encoder. MCP and the agent come in later milestones.
 
 ## Privacy first
 
@@ -61,7 +61,7 @@ Open Library, or <http://127.0.0.1:8000/docs> for the interactive API docs.
 | `GET /books` | List/filter books. Params: `q`, `status`, `min_rating`, `limit`, `offset` |
 | `GET /books/{id}` | One book and its reading entry |
 | `GET /stats` | Counts by status, rating histogram, top authors/shelves |
-| `GET /discover` | Open Library search. Params: `q` (required), `limit`, `include_owned` |
+| `GET /discover` | Open Library search. Params: `q` (required), `limit`, `include_owned`, `rerank` |
 
 `status` is one of `read`, `currently_reading`, or `to_read`.
 
@@ -80,6 +80,21 @@ library, matching by ISBN first and then by normalized title + author.
 - Only the search text is sent to Open Library. `include_owned=true` also returns books you
   already have, flagged with `in_library`.
 
+## Reranking
+
+Discovery results are reranked locally with
+[`cross-encoder/ms-marco-MiniLM-L6-v2`](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2),
+scoring each candidate's `Title — Author (year)` against the query and keeping the best `limit`.
+
+- First rerank downloads the model (~90 MB) from Hugging Face into the local HF cache and loads
+  it on CPU; later requests reuse the in-process instance. This is the only other outbound
+  request besides the Open Library search, and it sends no library data.
+- `GET /discover` reranks by default. Pass `rerank=false` to keep Open Library's order, or set
+  `BOOKSHELF_RERANK_ENABLED=false` to disable the model entirely (no torch usage, no download).
+- `BOOKSHELF_RERANK_CANDIDATES` caps how many results are scored (`25` by default).
+  `BOOKSHELF_RERANK_MODEL` selects a different cross-encoder.
+- Responses include `"reranked": true/false`; the `/find` page shows it in the result summary.
+
 ## Tests and checks
 
 ```bash
@@ -91,7 +106,8 @@ uv run mypy src
 ```
 
 Tests create a temporary SQLite database and never touch `data/`. Open Library is always mocked
-via `httpx.MockTransport` or a patched `fetch_search`, so the suite needs no network.
+via `httpx.MockTransport` or a patched `fetch_search`, and reranking is tested with a fake
+`Scorer`, so the suite needs no network and never downloads model weights.
 
 ## Architecture
 
@@ -106,13 +122,15 @@ src/bookshelf/
 ├── services.py        shared business logic (API today, MCP/agent later)
 ├── openlibrary.py     Open Library HTTP client + parsing
 ├── matching.py        title/author normalization for dedupe
+├── rerank.py          lazy local cross-encoder scoring
 ├── web.py             server-rendered HTML pages
 ├── api/               thin FastAPI adapters
 └── ingest/goodreads.py  CSV parser, upserts, CLI
 ```
 
 - API routes call `services.py`; only `repository.py` and the importer contain SQL.
-- `openlibrary.py` is the only module that makes outbound HTTP calls.
+- `openlibrary.py` is the only module that makes outbound HTTP calls. `rerank.py` only downloads
+  a model from Hugging Face on first use; inference stays local.
 - FastAPI endpoints are synchronous. `sqlite3` is synchronous too; `def` endpoints run in the
   threadpool. One connection per request, with foreign keys, WAL, and a busy timeout enabled.
 - `books` holds catalog metadata; `library_entries` holds personal status/rating/dates. Keeping
@@ -124,7 +142,7 @@ src/bookshelf/
 
 1. **M1 (done):** Goodreads import, SQLite, read-only FastAPI.
 2. **M2 (done):** Open Library search, metadata caching, dedupe, enrichment budget.
-3. **M3:** Local cross-encoder reranking (`cross-encoder/ms-marco-MiniLM-L6-v2`).
+3. **M3 (done):** Local cross-encoder reranking (`cross-encoder/ms-marco-MiniLM-L6-v2`).
 4. **M4:** MCP tools and the LLM-driven retrieval loop.
 5. **M5:** Docker, Langfuse tracing, sandbox only for dynamic analysis.
 6. **M6:** Retrieval evaluations and local-vs-hosted model comparison.

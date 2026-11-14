@@ -326,10 +326,14 @@ def render_discover(
             )
             body = f'<div class="empty"><p>{reason}</p></div>'
         source = "cached" if page.cached else "fresh"
-        meta = (
-            f'<p class="results">{page.total_found} found · '
-            f"{page.skipped_owned} already in your library · {source}</p>"
-        )
+        parts = [
+            f"{page.total_found} found",
+            f"{page.skipped_owned} already in your library",
+            source,
+        ]
+        if page.reranked:
+            parts.append("reranked")
+        meta = f'<p class="results">{" · ".join(parts)}</p>'
     content = f"""<p class="sub">Find something new. Results are cached locally for a day.</p>
 <form class="filters" method="get" action="/find">
 <input type="search" name="q" value="{escape(query or "")}" placeholder="Title, author, or topic"

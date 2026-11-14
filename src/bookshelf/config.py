@@ -22,3 +22,8 @@ class Settings(BaseSettings):
     openlibrary_timeout_seconds: float = 10.0
     openlibrary_cache_ttl_seconds: int = 86400
     openlibrary_max_requests: int = 3
+
+    # M3: local cross-encoder reranking. Loaded lazily on first use; disable to stay offline.
+    rerank_enabled: bool = True
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L6-v2"
+    rerank_candidates: int = 25

@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
-from .. import openlibrary, web
+from .. import openlibrary, rerank, web
 from ..config import Settings
 from ..db import schema_version
 from ..models import BookOut, BookPage, DiscoveryPage, HealthResponse, ReadingStatus, Stats
@@ -54,8 +54,16 @@ def find_books(
     page: DiscoveryPage | None = None
     error: str | None = None
     if q and q.strip():
+        scorer = rerank.get_scorer(settings.rerank_model) if settings.rerank_enabled else None
         try:
-            page = discover_service(conn, query=q, limit=12, include_owned=False, settings=settings)
+            page = discover_service(
+                conn,
+                query=q,
+                limit=12,
+                include_owned=False,
+                settings=settings,
+                scorer=scorer,
+            )
         except openlibrary.OpenLibraryError:
             error = "Open Library could not be reached. Try again in a moment."
     return HTMLResponse(web.render_discover(query=q, page=page, error=error))
@@ -68,7 +76,10 @@ def discover(
     q: str = Query(min_length=1, max_length=200),
     limit: int = Query(default=10, ge=1, le=25),
     include_owned: bool = False,
+    use_rerank: bool | None = Query(default=None, alias="rerank"),
 ) -> DiscoveryPage:
+    rerank_enabled = settings.rerank_enabled if use_rerank is None else use_rerank
+    scorer = rerank.get_scorer(settings.rerank_model) if rerank_enabled else None
     try:
         return discover_service(
             conn,
@@ -76,6 +87,7 @@ def discover(
             limit=limit,
             include_owned=include_owned,
             settings=settings,
+            scorer=scorer,
         )
     except openlibrary.OpenLibraryError as exc:
         raise HTTPException(status_code=502, detail="Open Library request failed") from exc

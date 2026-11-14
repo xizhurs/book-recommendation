@@ -151,7 +151,13 @@ def test_discover_respects_limit(
 def test_discover_revalidates_expired_cache(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, object]] = []
     install_fake_fetch(monkeypatch, calls)
-    app = create_app(Settings(db_path=db_path, openlibrary_cache_ttl_seconds=0))
+    app = create_app(
+        Settings(
+            db_path=db_path,
+            openlibrary_cache_ttl_seconds=0,
+            rerank_enabled=False,
+        )
+    )
 
     with TestClient(app) as client:
         first = client.get("/discover", params={"q": "dune"})
@@ -166,7 +172,7 @@ def test_discover_revalidates_expired_cache(db_path: Path, monkeypatch: pytest.M
 def test_discover_stops_when_budget_is_zero(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, object]] = []
     install_fake_fetch(monkeypatch, calls)
-    app = create_app(Settings(db_path=db_path, openlibrary_max_requests=0))
+    app = create_app(Settings(db_path=db_path, openlibrary_max_requests=0, rerank_enabled=False))
 
     with TestClient(app) as client:
         response = client.get("/discover", params={"q": "dune"})
@@ -179,6 +185,7 @@ def test_discover_stops_when_budget_is_zero(db_path: Path, monkeypatch: pytest.M
         "skipped_owned": 0,
         "cached": False,
         "requests_used": 0,
+        "reranked": False,
     }
     assert calls == []
 

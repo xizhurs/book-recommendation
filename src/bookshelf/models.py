@@ -78,6 +78,7 @@ class DiscoveryPage(BaseModel):
     skipped_owned: int
     cached: bool
     requests_used: int
+    reranked: bool = False
 
 
 class HealthResponse(BaseModel):

@@ -26,6 +26,10 @@
   cached in `remote_cache` through `repository.py`, deduped by `matching.py`, and budgeted by
   `Settings.openlibrary_max_requests` in `services.discover`. Tests inject `httpx.MockTransport`
   or monkeypatch `openlibrary.fetch_search`; no test may hit the real network.
+- `rerank.py` wraps a cross-encoder in a lazy, process-wide `Scorer`; `services.discover` accepts
+  an injected scorer and reorders candidates before truncating to `limit`. Keep torch and
+  sentence-transformers imports inside the lazy load so tests and non-rerank requests stay fast.
+  Tests use a fake scorer; do not add tests that download model weights to the default run.
 - Endpoints are synchronous `def` functions. `sqlite3` is synchronous; one connection per request.
   Do not introduce async SQLite or an ORM without a clear reason.
 - `books` stores catalog metadata; `library_entries` stores personal status, rating, and dates.
@@ -38,13 +42,13 @@
   log, or commit its contents. Use `tests/fixtures/goodreads_sample.csv` (fake data) in tests.
 - `.env` is gitignored; only `.env.example` is committed. The API binds to `127.0.0.1`.
 - Reviews are opt-in at import time; private notes are never imported. Do not add telemetry.
-  The only outbound call is the Open Library search, and it sends search text only — never the
-  library or review contents. Discovery responses are cached locally, not uploaded anywhere.
+  The only outbound calls are the Open Library search (search text only — never the library or
+  review contents) and the one-time cross-encoder download from Hugging Face (no personal data).
+  Discovery responses and models are cached locally, not uploaded anywhere.
 - Tests must use temporary databases and must not touch `data/`.
 
 ## Current scope
 
-M2: Open Library search, SQLite caching (`remote_cache`), dedupe against the library, and a
-per-search request budget. Do not add cross-encoder reranking, MCP, agent code, Docker, or
-Langfuse until the matching milestone. Planned order: M3 cross-encoder reranking, M4 MCP + LLM
-retrieval loop, M5 Docker/Langfuse/sandbox, M6 evaluations.
+M3: Open Library search with SQLite caching and dedupe, plus local cross-encoder reranking.
+Do not add MCP, agent code, Docker, or Langfuse until the matching milestone. Planned order:
+M4 MCP + LLM retrieval loop, M5 Docker/Langfuse/sandbox, M6 evaluations.

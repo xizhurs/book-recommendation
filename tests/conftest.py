@@ -38,7 +38,7 @@ def conn(db_path: Path) -> Iterator[sqlite3.Connection]:
 
 @pytest.fixture
 def app(db_path: Path) -> FastAPI:
-    return create_app(Settings(db_path=db_path))
+    return create_app(Settings(db_path=db_path, rerank_enabled=False))
 
 
 @pytest.fixture
@@ -55,7 +55,7 @@ def imported_app(db_path: Path) -> FastAPI:
         import_goodreads(connection, SAMPLE_CSV)
     finally:
         connection.close()
-    return create_app(Settings(db_path=db_path))
+    return create_app(Settings(db_path=db_path, rerank_enabled=False))
 
 
 @pytest.fixture

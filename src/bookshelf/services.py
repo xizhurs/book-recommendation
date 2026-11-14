@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
-from . import openlibrary, repository
+from . import openlibrary, repository, rerank
 from .config import Settings
 from .matching import normalize_name, title_author_key
 from .models import BookOut, DiscoveryItem, DiscoveryPage, ReadingStatus, Stats
@@ -46,15 +46,18 @@ def discover(
     limit: int,
     include_owned: bool,
     settings: Settings,
+    scorer: rerank.Scorer | None = None,
 ) -> DiscoveryPage:
     """Search Open Library for books the library does not already contain.
 
     Responses are cached in SQLite for ``openlibrary_cache_ttl_seconds`` and every call is
     bounded by ``openlibrary_max_requests`` so a repeated search never becomes a request storm.
+    When a ``scorer`` is supplied, up to ``rerank_candidates`` results are reranked locally.
     """
     query = query.strip()
     fetch_limit = min(max(limit * 2, 10), MAX_FETCH_LIMIT)
     cache_key = f"{normalize_name(query)}|{fetch_limit}"
+    collect_limit = max(limit, settings.rerank_candidates) if scorer is not None else limit
 
     now = datetime.now(UTC)
     payload = repository.get_cached_payload(
@@ -106,9 +109,12 @@ def discover(
             skipped_owned += 1
             if not include_owned:
                 continue
-        if len(items) >= limit:
+        if len(items) >= collect_limit:
             continue
         items.append(_to_item(work, owned))
+
+    if scorer is not None:
+        items = _rerank(query, items, settings.rerank_candidates, scorer)[:limit]
 
     return DiscoveryPage(
         query=query,
@@ -117,7 +123,22 @@ def discover(
         skipped_owned=skipped_owned,
         cached=cached,
         requests_used=requests_used,
+        reranked=scorer is not None,
     )
+
+
+def _rerank(
+    query: str,
+    items: list[DiscoveryItem],
+    candidates: int,
+    scorer: rerank.Scorer,
+) -> list[DiscoveryItem]:
+    head = items[:candidates]
+    tail = items[candidates:]
+    if len(head) < 2:
+        return items
+    documents = [rerank.describe(item.title, item.author, item.first_publish_year) for item in head]
+    return [head[index] for index in rerank.order(scorer.score(query, documents))] + tail
 
 
 def _to_item(work: openlibrary.OpenLibraryWork, owned: bool) -> DiscoveryItem:
