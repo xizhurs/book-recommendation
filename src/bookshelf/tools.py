@@ -19,6 +19,23 @@ from .services import discover, fuzzy_search_books, get_book, get_stats, list_bo
 MAX_SEARCH_LIMIT = 25
 MAX_DISCOVER_LIMIT = 15
 
+# Shared by the built-in agent's system prompt and the MCP server instructions, so every client
+# gets the same guidance on using these tools.
+TASTE_GUIDANCE = (
+    "For open-ended requests ('what should I read', 'based on what I read') first learn the "
+    "reader's taste: search_library with min_rating 4 for favourites, status read for recent "
+    "reads, and library_stats for favourite authors. Base the suggestions on what you find and "
+    "name the owned books each one follows from. For narrow requests, search only what is "
+    "relevant."
+)
+DISCOVERY_GUIDANCE = (
+    "discover_books is a plain keyword search with no notion of 'similar to'; topic or genre "
+    "queries return noise (essays, biographies, unrelated classics). To recommend new books, "
+    "name specific candidates from your own knowledge of similar books, then confirm each with "
+    "discover_books using its exact title and author. Recommend only books that search "
+    "confirmed exist and are not already owned; say so if none could be confirmed."
+)
+
 TOOL_SPECS: list[dict[str, Any]] = [
     {
         "type": "function",
