@@ -103,3 +103,21 @@ class Settings(BaseSettings):
     # M4: LLM provider for the recommendation loop (bare env names, see LLMSettings).
     llm: LLMSettings = Field(default_factory=LLMSettings)
     tracing: TracingSettings = Field(default_factory=TracingSettings)
+
+    def with_overrides(
+        self,
+        *,
+        provider: Literal["openai", "ollama"] | None = None,
+        model: str | None = None,
+        rerank: bool | None = None,
+    ) -> Settings:
+        """A copy with per-request choices applied; ``model`` targets the resulting provider."""
+        llm = self.llm
+        if provider is not None:
+            llm = llm.model_copy(update={"llm_provider": provider})
+        if model is not None:
+            llm = llm.model_copy(update={f"{llm.llm_provider}_model": model})
+        update: dict[str, object] = {"llm": llm}
+        if rerank is not None:
+            update["rerank_enabled"] = self.rerank_enabled and rerank
+        return self.model_copy(update=update)

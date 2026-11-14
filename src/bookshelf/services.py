@@ -171,3 +171,13 @@ def _to_item(work: openlibrary.OpenLibraryWork, owned: bool) -> DiscoveryItem:
         edition_count=work.edition_count,
         in_library=owned,
     )
+
+
+def session_history(
+    conn: sqlite3.Connection, session_id: str, *, limit: int
+) -> list[tuple[str, str]]:
+    return repository.get_conversation(conn, session_id, limit=limit)
+
+
+def forget_session(conn: sqlite3.Connection, session_id: str) -> int:
+    return repository.clear_conversation(conn, session_id)

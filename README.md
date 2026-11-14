@@ -70,6 +70,7 @@ Open Library, <http://127.0.0.1:8000/ask> to ask for recommendations, or
 | `GET /discover` | Open Library search. Params: `q` (required), `limit`, `include_owned`, `rerank` |
 | `POST /recommend` | LLM recommendation. JSON: `{"query": "...", "max_steps": 4}` |
 | `GET /ask` | HTML page running the same loop as `/recommend`, server-rendered |
+| `POST /ask/clear?session_id=` | Delete a session's conversation memory (used by the `/ask` page) |
 
 `status` is one of `read`, `currently_reading`, or `to_read`.
 
@@ -159,6 +160,12 @@ stateless.
 uv run python -m bookshelf.ask --session-id austen "What should I read after Jane Austen?"
 uv run python -m bookshelf.ask --session-id austen "Something more recent?"
 ```
+
+The `/ask` page has controls for all of this: a **Session** field (remembered in your browser,
+with a "New session" button), a **Provider** and **Model** picker (OpenAI is only selectable when
+`OPENAI_API_KEY` is set), **Max steps**, and **Skip rerank**. Earlier turns of the session are
+listed under the form, with a button to clear that session's memory. Choosing OpenAI there sends
+the question to the hosted API exactly as `LLM_PROVIDER=openai` does.
 
 Memory is stored locally in the `conversation_turns` table (question and answer text only, never
 tool results or reviews) and stays until you delete those rows. Replayed turns go to the

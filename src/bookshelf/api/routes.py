@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
 import sqlite3
-from typing import Annotated
+from typing import Annotated, Literal
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .. import agent, llm, openlibrary, rerank, web
 from ..config import Settings
@@ -20,9 +22,11 @@ from ..models import (
     Stats,
 )
 from ..services import discover as discover_service
+from ..services import forget_session
 from ..services import get_book as get_book_service
 from ..services import get_stats as get_stats_service
 from ..services import list_books as list_books_service
+from ..services import session_history as get_history
 from .deps import get_db, get_settings
 
 DbConn = Annotated[sqlite3.Connection, Depends(get_db)]
@@ -102,23 +106,89 @@ def discover(
         raise HTTPException(status_code=502, detail="Open Library request failed") from exc
 
 
+_SESSION_ID_PATTERN = re.compile(r"^[\x20-\x7e]{1,200}$")
+
+
+def _blank_to_none(value: str | None) -> str | None:
+    value = (value or "").strip()
+    return value or None
+
+
 @router.get("/ask", response_class=HTMLResponse, include_in_schema=False)
 def ask_page(
     conn: DbConn,
     settings: AppSettings,
     q: str | None = Query(default=None, max_length=1000),
-    session_id: str | None = Query(
-        default=None, min_length=1, max_length=200, pattern=r"^[\x20-\x7e]+$"
-    ),
+    session_id: str | None = Query(default=None, max_length=200),
+    provider: str | None = Query(default=None, max_length=20),
+    model: str | None = Query(default=None, max_length=100),
+    max_steps: str | None = Query(default=None, max_length=2),
+    no_rerank: str | None = Query(default=None, max_length=1),
 ) -> HTMLResponse:
+    session = _blank_to_none(session_id)
+    provider_text = _blank_to_none(provider)
+    chosen_provider: Literal["ollama", "openai"] | None = None
+    if provider_text == "ollama":
+        chosen_provider = "ollama"
+    elif provider_text == "openai":
+        chosen_provider = "openai"
+    steps_text = _blank_to_none(max_steps)
+    steps = int(steps_text) if steps_text and steps_text.isdigit() else None
+    use_rerank = no_rerank != "1"
+    errors: list[str] = []
+    if session is not None and not _SESSION_ID_PATTERN.match(session):
+        errors.append("Session id must be 1-200 printable ASCII characters.")
+    if provider_text is not None and chosen_provider is None:
+        errors.append("Unknown provider.")
+    if steps is not None and not 1 <= steps <= 8:
+        errors.append("Max steps must be between 1 and 8.")
+
+    llm_settings = settings.llm
+    openai_ready = llm_settings.openai_api_key is not None and bool(
+        llm_settings.openai_api_key.get_secret_value().strip()
+    )
+    active = chosen_provider or llm_settings.llm_provider
+    form = web.AskForm(
+        query=q or "",
+        session_id=session or "",
+        provider=active,
+        model=_blank_to_none(model) or "",
+        max_steps=steps if steps and 1 <= steps <= 8 else None,
+        rerank=use_rerank,
+        openai_ready=openai_ready,
+        models={"ollama": llm_settings.ollama_model, "openai": llm_settings.openai_model},
+    )
+
     result: Recommendation | None = None
-    error: str | None = None
-    if q and q.strip():
+    error: str | None = " ".join(errors) or None
+    history: list[tuple[str, str]] = []
+    if session is not None and not errors:
+        history = get_history(conn, session, limit=agent.MEMORY_TURNS)
+    if q and q.strip() and not errors:
         try:
-            result = agent.recommend(conn, query=q, settings=settings, session_id=session_id)
+            result = agent.recommend(
+                conn,
+                query=q,
+                settings=settings.with_overrides(
+                    provider=chosen_provider,
+                    model=form.model or None,
+                    rerank=use_rerank,
+                ),
+                max_steps=steps,
+                session_id=session,
+            )
         except llm.LLMError as exc:
             error = f"Could not reach the LLM: {exc}"
-    return HTMLResponse(web.render_ask(query=q, result=result, error=error))
+    return HTMLResponse(web.render_ask(form=form, result=result, error=error, history=history))
+
+
+@router.post("/ask/clear", include_in_schema=False)
+def ask_clear(
+    conn: DbConn,
+    session_id: str = Query(min_length=1, max_length=200, pattern=r"^[\x20-\x7e]+$"),
+) -> RedirectResponse:
+    forget_session(conn, session_id)
+    return RedirectResponse("/ask?" + urlencode({"session_id": session_id}), status_code=303)
 
 
 @router.post("/recommend", response_model=Recommendation)

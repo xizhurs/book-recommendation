@@ -81,18 +81,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("--session-id must be 1-200 printable ASCII characters", file=sys.stderr)
         return 2
 
-    settings = Settings()
-    if args.no_rerank:
-        settings = settings.model_copy(update={"rerank_enabled": False})
+    model = None
     if args.model is not None:
         model = args.model.strip()
         if not model:
             print("--model cannot be empty", file=sys.stderr)
             return 2
-        field = f"{settings.llm.llm_provider}_model"
-        settings = settings.model_copy(
-            update={"llm": settings.llm.model_copy(update={field: model})}
-        )
+    settings = Settings().with_overrides(model=model, rerank=False if args.no_rerank else None)
     db_path = args.db if args.db is not None else settings.db_path
 
     try:
