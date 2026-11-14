@@ -184,3 +184,30 @@ def test_find_page_reports_reranked_results(db_path: Path, monkeypatch: pytest.M
     assert response.status_code == 200
     assert "reranked" in response.text
     assert response.text.index("A Book About Gardens") < response.text.index("Children of Dune")
+
+
+def test_scorer_passes_the_hf_token_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+    import types
+
+    captured: dict[str, object] = {}
+
+    class FakeCrossEncoder:
+        def __init__(self, name: str, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+            return [0.5 for _ in pairs]
+
+    fake_module = types.SimpleNamespace(CrossEncoder=FakeCrossEncoder)
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
+    monkeypatch.setenv("HF_TOKEN", "hf_test_token")
+
+    assert rerank.CrossEncoderScorer("m").score("q", ["d"]) == [0.5]
+    assert captured == {"device": "cpu", "token": "hf_test_token"}
+
+    monkeypatch.delenv("HF_TOKEN")
+    monkeypatch.chdir("/")  # no .env to pick up
+    captured.clear()
+    rerank.CrossEncoderScorer("m").score("q", ["d"])
+    assert captured["token"] is None

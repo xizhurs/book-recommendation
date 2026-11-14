@@ -12,6 +12,8 @@ from functools import lru_cache
 from threading import Lock
 from typing import Any, Protocol
 
+from .config import HubSettings
+
 DEFAULT_MODEL = "cross-encoder/ms-marco-MiniLM-L6-v2"
 
 
@@ -39,7 +41,13 @@ class CrossEncoderScorer:
                 if self._model is None:
                     from sentence_transformers import CrossEncoder
 
-                    self._model = CrossEncoder(self.model_name, device="cpu")
+                    secret = HubSettings().hf_token
+                    token = secret.get_secret_value() if secret is not None else ""
+                    self._model = CrossEncoder(
+                        self.model_name,
+                        device="cpu",
+                        token=token or None,
+                    )
         pairs = [(query, document) for document in documents]
         return [float(score) for score in self._model.predict(pairs)]
 

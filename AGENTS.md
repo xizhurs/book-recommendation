@@ -27,7 +27,7 @@
   cache, dedupe, or rerank logic.
 - `db.py` opens SQLite with foreign keys, WAL, and a busy timeout. `schema.sql` is applied
   idempotently by `db.init_db()` in the FastAPI lifespan. Schema version is `PRAGMA user_version`
-  (currently 2); there is no migration framework yet, so new tables must be `CREATE ... IF NOT
+  (currently 3); there is no migration framework yet, so new tables must be `CREATE ... IF NOT
   EXISTS` and additive.
 - `openlibrary.py` is the only outbound HTTP code: a synchronous `httpx` client for
   `search.json`, plus parsing into `OpenLibraryWork`. It never touches SQLite. Responses are
@@ -47,6 +47,9 @@
   `ollama` (Ollama serves `/v1/chat/completions`). Provider settings live in `LLMSettings` and
   intentionally use bare env names (`LLM_PROVIDER`, `OPENAI_*`, `OLLAMA_*`); `Settings.llm` nests
   them. Do not add provider-specific branches outside `llm.build_client`.
+- `agent.recommend` accepts an optional `session_id`: it keys Langfuse sessions and conversation
+  memory (last 6 Q/A pairs in `conversation_turns`, answers only, no tool results). No id means
+  stateless.
 - `agent.recommend` runs the bounded tool loop: at most `llm_max_steps` model turns, then one
   final answer request. `POST /recommend`, `GET /ask`, and the `bookshelf.ask` CLI all call it.
   Tests inject a fake `ChatClient`; LLM HTTP behaviour is tested with `httpx.MockTransport`.

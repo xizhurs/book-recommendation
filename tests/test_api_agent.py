@@ -36,17 +36,20 @@ def test_recommend_endpoint_returns_the_answer(
         query: str,
         settings: Settings,
         max_steps: int | None = None,
+        session_id: str | None = None,
     ) -> Recommendation:
-        captured.update(query=query, max_steps=max_steps)
+        captured.update(query=query, max_steps=max_steps, session_id=session_id)
         return fake_result()
 
     monkeypatch.setattr(agent, "recommend", fake_recommend)
 
-    response = imported_client.post("/recommend", json={"query": "what next?", "max_steps": 2})
+    response = imported_client.post(
+        "/recommend", json={"query": "what next?", "max_steps": 2, "session_id": "chat-1"}
+    )
 
     assert response.status_code == 200
     assert response.json() == fake_result().model_dump(mode="json")
-    assert captured == {"query": "what next?", "max_steps": 2}
+    assert captured == {"query": "what next?", "max_steps": 2, "session_id": "chat-1"}
 
 
 def test_recommend_endpoint_reports_llm_failures(
@@ -136,3 +139,9 @@ def test_ask_page_without_a_query_shows_the_form(imported_client: TestClient) ->
     assert response.status_code == 200
     assert "What should I read next?" in response.text
     assert "The model chooses tools" in response.text
+
+
+def test_recommend_endpoint_rejects_bad_session_ids(imported_client: TestClient) -> None:
+    for bad in ("", "x" * 201, "caf\u00e9"):
+        response = imported_client.post("/recommend", json={"query": "hi", "session_id": bad})
+        assert response.status_code == 422

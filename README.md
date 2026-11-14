@@ -147,6 +147,24 @@ uv run python -m bookshelf.ask "what next?" --json --db data/other.db
 Exit codes: `0` success, `1` the LLM request failed, `2` invalid arguments. Tool failures (for
 example Open Library being unreachable) are returned to the model rather than aborting the run.
 
+### Multi-turn conversations
+
+Pass a session id (1-200 printable ASCII characters) to make questions share memory:
+`--session-id` on `bookshelf.ask`, `"session_id"` in the `POST /recommend` body, or
+`?session_id=` on `/ask`. The last 6 question/answer pairs of that session are replayed to the
+model, so follow-ups like "something more recent?" work. Without a session id every question is
+stateless.
+
+```bash
+uv run python -m bookshelf.ask --session-id austen "What should I read after Jane Austen?"
+uv run python -m bookshelf.ask --session-id austen "Something more recent?"
+```
+
+Memory is stored locally in the `conversation_turns` table (question and answer text only, never
+tool results or reviews) and stays until you delete those rows. Replayed turns go to the
+configured LLM provider like any other message. The same id also groups the runs into one
+Langfuse session when tracing is on.
+
 ### Langfuse tracing (optional)
 
 Set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` in `.env` and every agent
@@ -160,15 +178,64 @@ status, ratings; never review text) and the model's output, and it is sent to `L
 
 ### Docker
 
+Every command below is run from the repo root. `docker compose` is the easy path; `docker run`
+is the same thing spelled out.
+
+**Run the API**
+
 ```bash
-docker compose up --build        # API on http://127.0.0.1:8000
+docker compose up --build -d     # API on http://127.0.0.1:8000
+docker compose logs -f           # follow logs
+docker compose down              # stop
 ```
+
+```bash
+docker build -t bookshelf:local .
+docker run -d --name bookshelf \
+  -p 127.0.0.1:8000:8000 \
+  --env-file .env \
+  -e BOOKSHELF_DB_PATH=/data/bookshelf.db \
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434/v1 \
+  --add-host host.docker.internal:host-gateway \
+  -v "$PWD/data:/data" -v bookshelf-models:/models \
+  --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+  bookshelf:local
+curl -s http://127.0.0.1:8000/health
+```
+
+`docker run --env-file` keeps quote characters literally (compose strips them), so for `docker
+run` write `.env` values unquoted, e.g. `LANGFUSE_BASE_URL=https://cloud.langfuse.com`.
+
+**Run the CLIs**
+
+The same image runs the CLIs: put the command after the image name. They use the same `.env`,
+`./data` DB and model cache as the API, and need no published port.
+
+```bash
+# compose: nothing else to type
+docker compose run --rm bookshelf python -m bookshelf.ingest.goodreads /data/goodreads_library_export.csv
+docker compose run --rm bookshelf python -m bookshelf.ask "What should I read after Dune?" --steps
+docker compose run --rm bookshelf python -m bookshelf.discover "dune frank herbert" --limit 5
+
+# plain docker: define the options once
+DRUN='docker run --rm --env-file .env -e BOOKSHELF_DB_PATH=/data/bookshelf.db
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+  --add-host host.docker.internal:host-gateway
+  -v '"$PWD"'/data:/data -v bookshelf-models:/models
+  --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true bookshelf:local'
+$DRUN python -m bookshelf.ask "cozy fantasy I haven't read" --max-steps 3
+$DRUN python -m bookshelf.discover "dune" --no-rerank --json
+```
+
+Put the CSV in `./data` first; inside the container it appears under `/data`. The container
+runs as a non-root user (uid 10001), so on Linux `./data` must be writable by it
+(`chown 10001 data`); Docker Desktop on macOS handles this for you.
 
 The compose file publishes the port on `127.0.0.1` only, mounts `./data` (your DB is never copied
 into the image), reads `.env` at runtime, runs as a non-root user with a read-only filesystem and
 no capabilities, and caches the reranker model in a named volume. Ollama runs on the host: the
-container reaches it at `host.docker.internal:11434`. Import your CSV on the host as usual, or
-run `docker compose run --rm bookshelf python -m bookshelf.ingest.goodreads /data/<file>.csv`.
+container reaches it at `host.docker.internal:11434`. This has not been built or run yet; the
+first build downloads torch and is large.
 
 ### Tools
 

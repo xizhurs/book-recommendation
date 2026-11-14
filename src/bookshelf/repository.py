@@ -202,6 +202,36 @@ def store_cached_payload(
     conn.commit()
 
 
+def get_conversation(
+    conn: sqlite3.Connection, session_id: str, *, limit: int
+) -> list[tuple[str, str]]:
+    """The last ``limit`` (question, answer) turns of a session, oldest first."""
+    rows = conn.execute(
+        """
+        SELECT question, answer FROM conversation_turns
+        WHERE session_id = ? ORDER BY id DESC LIMIT ?
+        """,
+        (session_id, limit),
+    ).fetchall()
+    return [(str(row["question"]), str(row["answer"])) for row in reversed(rows)]
+
+
+def append_conversation_turn(
+    conn: sqlite3.Connection, session_id: str, question: str, answer: str
+) -> None:
+    conn.execute(
+        "INSERT INTO conversation_turns (session_id, question, answer) VALUES (?, ?, ?)",
+        (session_id, question, answer),
+    )
+    conn.commit()
+
+
+def clear_conversation(conn: sqlite3.Connection, session_id: str) -> int:
+    cursor = conn.execute("DELETE FROM conversation_turns WHERE session_id = ?", (session_id,))
+    conn.commit()
+    return cursor.rowcount
+
+
 def get_stats(conn: sqlite3.Connection) -> Stats:
     total_row = conn.execute("SELECT COUNT(*) FROM library_entries").fetchone()
     total = int(total_row[0]) if total_row is not None else 0

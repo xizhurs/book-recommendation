@@ -33,6 +33,19 @@ class LLMSettings(BaseSettings):
     llm_temperature: float = 0.2
 
 
+class HubSettings(BaseSettings):
+    """Optional Hugging Face token for the one-time cross-encoder download.
+
+    ``.env`` is read by pydantic-settings only, not exported to ``os.environ``, so the Hub
+    client would never see ``HF_TOKEN`` from ``.env`` on its own. The token is sent only to
+    huggingface.co.
+    """
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+
+    hf_token: SecretStr | None = None
+
+
 class TracingSettings(BaseSettings):
     """Langfuse tracing: off unless both keys are set, or when ``LANGFUSE_TRACING_ENABLED=false``.
 

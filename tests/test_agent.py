@@ -117,6 +117,23 @@ def test_exhausted_budget_returns_a_fallback(conn: sqlite3.Connection, settings:
     assert client.calls[1][1] is None
 
 
+def test_final_request_tells_the_model_to_answer_now(
+    conn: sqlite3.Connection, settings: Settings
+) -> None:
+    tool_only = llm.ChatResponse(
+        tool_calls=(llm.ToolCall(id="call_1", name="library_stats", arguments={}),)
+    )
+    client = FakeClient([tool_only, llm.ChatResponse(content="Here you go.")])
+
+    result = agent.recommend(conn, query="stats?", settings=settings, client=client, max_steps=1)
+
+    assert result.answer == "Here you go."
+    final_messages, final_tools = client.calls[1]
+    assert final_tools is None
+    assert final_messages[-1] == {"role": "user", "content": agent.FINAL_ANSWER_PROMPT}
+    assert final_messages[-2]["role"] == "tool"
+
+
 def test_max_steps_is_clamped_to_one_at_the_bottom(
     conn: sqlite3.Connection, settings: Settings
 ) -> None:

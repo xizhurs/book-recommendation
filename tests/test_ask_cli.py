@@ -38,8 +38,17 @@ def install_fake_agent(
         query: str,
         settings: Settings,
         max_steps: int | None = None,
+        session_id: str | None = None,
     ) -> Recommendation:
-        calls.append({"query": query, "settings": settings, "max_steps": max_steps, "conn": conn})
+        calls.append(
+            {
+                "query": query,
+                "settings": settings,
+                "max_steps": max_steps,
+                "session_id": session_id,
+                "conn": conn,
+            }
+        )
         return fake_result()
 
     monkeypatch.setattr(cli.agent, "recommend", fake_recommend)
@@ -106,6 +115,27 @@ def test_query_and_max_steps_are_forwarded(db_path: Path, monkeypatch: pytest.Mo
     assert len(calls) == 1
     assert calls[0]["query"] == "a book please"
     assert calls[0]["max_steps"] == 2
+
+
+def test_session_id_is_forwarded(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = install_fake_agent(monkeypatch)
+
+    cli.main(["--db", str(db_path), "--session-id", " chat-1 ", "what next?"])
+    cli.main(["--db", str(db_path), "what next?"])
+
+    assert [c["session_id"] for c in calls] == ["chat-1", None]
+
+
+def test_rejects_invalid_session_id(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = install_fake_agent(monkeypatch)
+
+    exit_code = cli.main(["--db", str(db_path), "--session-id", "bad\u00e9", "what next?"])
+
+    assert exit_code == 2
+    assert calls == []
+    assert "--session-id" in capsys.readouterr().err
 
 
 def test_no_rerank_disables_reranking(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

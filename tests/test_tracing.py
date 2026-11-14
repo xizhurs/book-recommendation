@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from bookshelf import agent, llm, tracing
+from bookshelf import agent, llm, repository, tracing
 from bookshelf.config import Settings, TracingSettings
 
 
@@ -25,8 +25,15 @@ class RecordingTracer:
         input: Any = None,
         model: str | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> Iterator[tracing.Observation]:
-        event: dict[str, Any] = {"name": name, "as_type": as_type, "input": input, "model": model}
+        event: dict[str, Any] = {
+            "name": name,
+            "as_type": as_type,
+            "input": input,
+            "model": model,
+            "session_id": session_id,
+        }
         self.events.append(event)
 
         class Obs:
@@ -159,3 +166,108 @@ def test_exceptions_inside_an_observation_propagate() -> None:
 
     with pytest.raises(ValueError, match="boom"), tracer.observe("recommend"):
         raise ValueError("boom")
+
+
+def test_langfuse_tracer_propagates_session_id_around_the_observation() -> None:
+    order: list[str] = []
+
+    @contextmanager
+    def propagate(**attrs: Any) -> Iterator[None]:
+        order.append(f"enter:{attrs['session_id']}")
+        yield
+        order.append("exit")
+
+    client = FakeLangfuseClient()
+    tracer = tracing.LangfuseTracer(client, propagate=propagate)
+
+    with tracer.observe("recommend", session_id="chat-1"):
+        order.append("body")
+
+    assert order == ["enter:chat-1", "body", "exit"]
+    assert len(client.started) == 1
+
+
+def test_langfuse_tracer_skips_propagation_without_session_id() -> None:
+    def propagate(**attrs: Any) -> Any:
+        raise AssertionError("should not be called")
+
+    tracer = tracing.LangfuseTracer(FakeLangfuseClient(), propagate=propagate)
+
+    with tracer.observe("recommend"):
+        pass
+
+
+def test_session_propagation_failure_never_breaks_the_caller() -> None:
+    def propagate(**attrs: Any) -> Any:
+        raise RuntimeError("no otel")
+
+    tracer = tracing.LangfuseTracer(FakeLangfuseClient(), propagate=propagate)
+
+    with tracer.observe("recommend", session_id="s") as span:
+        span.update(output="fine")
+
+
+def test_agent_passes_session_id_to_the_root_observation(conn: sqlite3.Connection) -> None:
+    tracer = RecordingTracer()
+    client = ScriptedClient([llm.ChatResponse(content="Read Dune.")])
+
+    agent.recommend(
+        conn, query="next?", settings=Settings(), client=client, tracer=tracer, session_id="s-1"
+    )
+
+    assert tracer.events[0]["session_id"] == "s-1"
+
+
+class RecordingClient(ScriptedClient):
+    def __init__(self, responses: list[llm.ChatResponse]) -> None:
+        super().__init__(responses)
+        self.seen: list[list[dict[str, Any]]] = []
+
+    def chat(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None
+    ) -> llm.ChatResponse:
+        self.seen.append([dict(m) for m in messages])
+        return super().chat(messages, tools)
+
+
+def test_session_memory_replays_earlier_turns(conn: sqlite3.Connection) -> None:
+    client = RecordingClient(
+        [llm.ChatResponse(content="Try Emma."), llm.ChatResponse(content="Try Dune.")]
+    )
+
+    agent.recommend(conn, query="after Austen?", settings=Settings(), client=client, session_id="s")
+    agent.recommend(
+        conn, query="something newer?", settings=Settings(), client=client, session_id="s"
+    )
+
+    first, second = client.seen
+    assert [m["role"] for m in first] == ["system", "user"]
+    assert [(m["role"], m["content"]) for m in second[1:]] == [
+        ("user", "after Austen?"),
+        ("assistant", "Try Emma."),
+        ("user", "something newer?"),
+    ]
+
+
+def test_memory_is_isolated_per_session_and_off_without_one(conn: sqlite3.Connection) -> None:
+    client = RecordingClient([llm.ChatResponse(content=f"a{i}") for i in range(3)])
+
+    agent.recommend(conn, query="q1", settings=Settings(), client=client, session_id="a")
+    agent.recommend(conn, query="q2", settings=Settings(), client=client, session_id="b")
+    agent.recommend(conn, query="q3", settings=Settings(), client=client)
+
+    assert all(len(messages) == 2 for messages in client.seen)
+    assert conn.execute("SELECT COUNT(*) FROM conversation_turns").fetchone()[0] == 2
+
+
+def test_memory_is_capped_and_skips_fallback_answers(conn: sqlite3.Connection) -> None:
+    for i in range(agent.MEMORY_TURNS + 2):
+        repository.append_conversation_turn(conn, "s", f"q{i}", f"a{i}")
+    client = RecordingClient([llm.ChatResponse(content="")] * 2)
+
+    agent.recommend(conn, query="now", settings=Settings(), client=client, session_id="s")
+
+    seen = client.seen[0]
+    assert len(seen) == 1 + 2 * agent.MEMORY_TURNS + 1
+    assert seen[1]["content"] == "q2"
+    assert repository.get_conversation(conn, "s", limit=100)[-1] == ("q7", "a7")

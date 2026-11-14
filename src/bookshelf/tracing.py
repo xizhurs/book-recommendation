@@ -9,7 +9,7 @@ untraced runs and tests never load it, and tracing failures never break a reques
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from functools import lru_cache
 from typing import Any, Protocol
@@ -32,6 +32,7 @@ class Tracer(Protocol):
         input: Any = None,
         model: str | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> AbstractContextManager[Observation]: ...
 
     def flush(self) -> None: ...
@@ -52,6 +53,7 @@ class NoopTracer:
         input: Any = None,
         model: str | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> Iterator[Observation]:
         yield _NoopObservation()
 
@@ -62,8 +64,9 @@ class NoopTracer:
 class LangfuseTracer:
     """Adapter over a Langfuse client (anything with ``start_as_current_observation``)."""
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, propagate: Callable[..., Any] | None = None) -> None:
         self._client = client
+        self._propagate = propagate
 
     @contextmanager
     def observe(
@@ -74,26 +77,39 @@ class LangfuseTracer:
         input: Any = None,
         model: str | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> Iterator[Observation]:
         fields: dict[str, Any] = {"name": name, "as_type": as_type, "input": input}
         if model is not None:
             fields["model"] = model
         if metadata:
             fields["metadata"] = metadata
+        entered: list[Any] = []
         try:
+            if session_id:
+                # Child observations inherit the session from the active context.
+                propagate = self._propagate or _langfuse_propagate()
+                session = propagate(session_id=session_id)
+                session.__enter__()
+                entered.append(session)
             manager = self._client.start_as_current_observation(**fields)
             observation = manager.__enter__()
+            entered.append(manager)
         except Exception:
             logger.warning("Langfuse tracing failed to start %r", name, exc_info=True)
+            for opened in reversed(entered):
+                _close(opened, None, None, None)
             yield _NoopObservation()
             return
         try:
             yield _SafeObservation(observation)
         except BaseException as exc:
-            _close(manager, type(exc), exc, exc.__traceback__)
+            for opened in reversed(entered):
+                _close(opened, type(exc), exc, exc.__traceback__)
             raise
         else:
-            _close(manager, None, None, None)
+            for opened in reversed(entered):
+                _close(opened, None, None, None)
 
     def flush(self) -> None:
         try:
@@ -111,6 +127,12 @@ class _SafeObservation:
             self._inner.update(**fields)
         except Exception:
             logger.warning("Langfuse update failed", exc_info=True)
+
+
+def _langfuse_propagate() -> Callable[..., Any]:
+    from langfuse import propagate_attributes
+
+    return propagate_attributes
 
 
 def _close(manager: Any, exc_type: Any, exc: Any, traceback: Any) -> None:

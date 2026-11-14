@@ -107,12 +107,15 @@ def ask_page(
     conn: DbConn,
     settings: AppSettings,
     q: str | None = Query(default=None, max_length=1000),
+    session_id: str | None = Query(
+        default=None, min_length=1, max_length=200, pattern=r"^[\x20-\x7e]+$"
+    ),
 ) -> HTMLResponse:
     result: Recommendation | None = None
     error: str | None = None
     if q and q.strip():
         try:
-            result = agent.recommend(conn, query=q, settings=settings)
+            result = agent.recommend(conn, query=q, settings=settings, session_id=session_id)
         except llm.LLMError as exc:
             error = f"Could not reach the LLM: {exc}"
     return HTMLResponse(web.render_ask(query=q, result=result, error=error))
@@ -130,6 +133,7 @@ def recommend(
             query=payload.query,
             settings=settings,
             max_steps=payload.max_steps,
+            session_id=payload.session_id,
         )
     except llm.LLMError as exc:
         raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}") from exc

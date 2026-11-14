@@ -45,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Model name for the configured provider (default: OLLAMA_MODEL / OPENAI_MODEL)",
     )
     parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Langfuse session id to group related questions (ignored when tracing is off)",
+    )
+    parser.add_argument(
         "--steps",
         action="store_true",
         help="Print each tool call and its result before the answer",
@@ -69,6 +74,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("Question cannot be empty", file=sys.stderr)
         return 2
 
+    session_id = args.session_id.strip() if args.session_id is not None else None
+    if session_id is not None and not (
+        0 < len(session_id) <= 200 and all(" " <= c <= "~" for c in session_id)
+    ):
+        print("--session-id must be 1-200 printable ASCII characters", file=sys.stderr)
+        return 2
+
     settings = Settings()
     if args.no_rerank:
         settings = settings.model_copy(update={"rerank_enabled": False})
@@ -91,6 +103,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 query=query,
                 settings=settings,
                 max_steps=args.max_steps,
+                session_id=session_id,
             )
     except llm.LLMError as exc:
         print(f"LLM request failed: {exc}", file=sys.stderr)
