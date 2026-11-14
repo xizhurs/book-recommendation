@@ -165,3 +165,8 @@ def test_settings_supply_the_default_budget(
     assert result.answer == "Done."
     assert len(client.calls) == 3
     assert len(result.steps) == 2
+
+
+def test_system_prompt_asks_for_up_to_five_formatted_suggestions() -> None:
+    assert "up to 5 confirmed books" in agent.SYSTEM_PROMPT
+    assert "**Title** by Author" in agent.SYSTEM_PROMPT

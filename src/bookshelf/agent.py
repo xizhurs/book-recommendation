@@ -31,7 +31,8 @@ SYSTEM_PROMPT = (
     "discover_books using its exact title and author. Recommend only books that search "
     "confirmed exist and are not already owned; say so if none could be confirmed.\n"
     "- Do not repeat titles you already suggested earlier in this conversation unless asked.\n"
-    "- Keep the final answer short: a few suggestions, each with one line of reasoning."
+    "- Recommend up to 5 confirmed books (fewer only if fewer could be confirmed). Format each "
+    "as `- **Title** by Author (year) – one line of reasoning`, and keep the rest short."
 )
 
 FINAL_ANSWER_PROMPT = (
