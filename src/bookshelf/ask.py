@@ -40,6 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Model turns before the final answer, 1-8 (default: LLM_MAX_STEPS)",
     )
     parser.add_argument(
+        "--model",
+        default=None,
+        help="Model name for the configured provider (default: OLLAMA_MODEL / OPENAI_MODEL)",
+    )
+    parser.add_argument(
         "--steps",
         action="store_true",
         help="Print each tool call and its result before the answer",
@@ -66,7 +71,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     settings = Settings()
     if args.no_rerank:
-        settings.rerank_enabled = False
+        settings = settings.model_copy(update={"rerank_enabled": False})
+    if args.model is not None:
+        model = args.model.strip()
+        if not model:
+            print("--model cannot be empty", file=sys.stderr)
+            return 2
+        field = f"{settings.llm.llm_provider}_model"
+        settings = settings.model_copy(
+            update={"llm": settings.llm.model_copy(update={field: model})}
+        )
     db_path = args.db if args.db is not None else settings.db_path
 
     try:

@@ -60,6 +60,18 @@ def test_prints_the_answer_and_summary(
     assert "search_library" not in captured.out
 
 
+def test_summary_pluralises_tool_calls(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    result = fake_result()
+    result.steps = result.steps * 2
+    monkeypatch.setattr(cli.agent, "recommend", lambda *args, **kwargs: result)
+
+    cli.main(["--db", str(db_path), "what next?"])
+
+    assert "fake · fake-1 · 2 tool calls" in capsys.readouterr().out
+
+
 def test_steps_flag_prints_tool_calls(
     db_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -114,6 +126,39 @@ def test_reranking_stays_enabled_by_default(db_path: Path, monkeypatch: pytest.M
     settings = calls[0]["settings"]
     assert isinstance(settings, Settings)
     assert settings.rerank_enabled is True
+
+
+def test_model_overrides_the_active_provider_model(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    calls = install_fake_agent(monkeypatch)
+
+    cli.main(["--db", str(db_path), "--model", "qwen3:8b", "what next?"])
+
+    settings = calls[0]["settings"]
+    assert isinstance(settings, Settings)
+    assert settings.llm.ollama_model == "qwen3:8b"
+
+
+def test_model_flag_targets_openai_when_selected(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    calls = install_fake_agent(monkeypatch)
+
+    cli.main(["--db", str(db_path), "--model", "gpt-4o", "what next?"])
+
+    settings = calls[0]["settings"]
+    assert isinstance(settings, Settings)
+    assert settings.llm.openai_model == "gpt-4o"
+
+
+def test_rejects_blank_model(db_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = cli.main(["--db", str(db_path), "--model", " ", "hello"])
+
+    assert exit_code == 2
+    assert "--model cannot be empty" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("value", ["0", "9", "-1"])

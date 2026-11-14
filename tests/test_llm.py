@@ -23,7 +23,7 @@ def test_build_client_defaults_to_local_ollama() -> None:
     client = llm.build_client(LLMSettings(_env_file=None))
 
     assert client.provider == "ollama"
-    assert client.model == "llama3.1"
+    assert client.model == "qwen3.5:4b"
     assert isinstance(client, llm.OpenAICompatibleClient)
     assert client.base_url == "http://127.0.0.1:11434/v1"
 

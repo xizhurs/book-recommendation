@@ -132,6 +132,21 @@ The response includes `answer`, `provider`, `model`, and every `steps[]` entry w
 name, arguments, and result. `max_steps` (1–8, default `LLM_MAX_STEPS`) caps how many model
 turns run; when the budget runs out the loop asks once more for a plain answer.
 
+### Ask from the CLI
+
+The same loop runs without the server, using the provider set by `LLM_PROVIDER`:
+
+```bash
+uv run python -m bookshelf.ask "What should I read after Dune?"
+uv run python -m bookshelf.ask "cozy fantasy I haven't read" --steps       # show tool calls
+uv run python -m bookshelf.ask "short sci-fi" --max-steps 3 --no-rerank
+uv run python -m bookshelf.ask "what next?" --model qwen3:8b       # override the model for one run
+uv run python -m bookshelf.ask "what next?" --json --db data/other.db
+```
+
+Exit codes: `0` success, `1` the LLM request failed, `2` invalid arguments. Tool failures (for
+example Open Library being unreachable) are returned to the model rather than aborting the run.
+
 ### Tools
 
 | Tool | Purpose |
@@ -157,7 +172,7 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
 # Hosted
 LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-6-luna
 OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 

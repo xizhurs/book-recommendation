@@ -8,7 +8,7 @@
 - `uv run python -m bookshelf.discover "query"` — discover via Open Library (cached, deduped,
   reranked). Flags: `--limit`, `--include-owned`, `--no-rerank`, `--json`, `--db PATH`.
 - `uv run python -m bookshelf.ask "query"` — ask the agent (same loop as `/recommend`).
-  Flags: `--max-steps`, `--steps`, `--no-rerank`, `--json`, `--db PATH`.
+  Flags: `--max-steps`, `--model`, `--steps`, `--no-rerank`, `--json`, `--db PATH`.
 - `uv run uvicorn bookshelf.main:app --reload --host 127.0.0.1 --port 8000` — run the API.
 - `uv run python -m bookshelf.mcp_server` — run the MCP stdio server (same tools as the agent).
 - `uv run pytest` — full suite.

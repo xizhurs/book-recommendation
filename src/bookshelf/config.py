@@ -23,9 +23,9 @@ class LLMSettings(BaseSettings):
 
     llm_provider: Literal["openai", "ollama"] = "ollama"
     openai_api_key: SecretStr | None = None
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "gpt-6-luna"
     openai_base_url: str = "https://api.openai.com/v1"
-    ollama_model: str = "llama3.1"
+    ollama_model: str = "qwen3.5:4b"
     ollama_base_url: str = "http://127.0.0.1:11434/v1"
 
     llm_timeout_seconds: float = 90.0
