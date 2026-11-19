@@ -1,8 +1,10 @@
 # AI Bookshelf
 
+[![CI](https://github.com/xizhurs/book-recommendation/actions/workflows/ci.yml/badge.svg)](https://github.com/xizhurs/book-recommendation/actions/workflows/ci.yml)
+
 Local-first reading history with agentic book discovery.
 
-**Current status: M4.** Import a Goodreads CSV into SQLite, browse it through a read-only
+**Current status: M5** (Docker and optional Langfuse tracing; sandbox deferred). Import a Goodreads CSV into SQLite, browse it through a read-only
 FastAPI API or the local web pages, search Open Library for books you do not own yet, rerank
 those results with a local cross-encoder, and ask an LLM for recommendations through a
 tool-calling loop. Both a local Ollama model and the hosted OpenAI API are supported.
