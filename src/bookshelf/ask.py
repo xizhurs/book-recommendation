@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
 
-from . import agent, llm
+from . import agent, llm, tracing
 from .config import Settings
 from .db import connect, init_db
 from .models import Recommendation
@@ -38,6 +38,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Model turns before the final answer, 1-8 (default: LLM_MAX_STEPS)",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model name for the configured provider (default: OLLAMA_MODEL / OPENAI_MODEL)",
+    )
+    parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Langfuse session id to group related questions (ignored when tracing is off)",
     )
     parser.add_argument(
         "--steps",
@@ -64,9 +74,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("Question cannot be empty", file=sys.stderr)
         return 2
 
-    settings = Settings()
-    if args.no_rerank:
-        settings.rerank_enabled = False
+    session_id = args.session_id.strip() if args.session_id is not None else None
+    if session_id is not None and not (
+        0 < len(session_id) <= 200 and all(" " <= c <= "~" for c in session_id)
+    ):
+        print("--session-id must be 1-200 printable ASCII characters", file=sys.stderr)
+        return 2
+
+    model = None
+    if args.model is not None:
+        model = args.model.strip()
+        if not model:
+            print("--model cannot be empty", file=sys.stderr)
+            return 2
+    settings = Settings().with_overrides(model=model, rerank=False if args.no_rerank else None)
     db_path = args.db if args.db is not None else settings.db_path
 
     try:
@@ -77,10 +98,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 query=query,
                 settings=settings,
                 max_steps=args.max_steps,
+                session_id=session_id,
             )
     except llm.LLMError as exc:
         print(f"LLM request failed: {exc}", file=sys.stderr)
         return 1
+    finally:
+        tracing.flush(settings.tracing)
 
     if args.json:
         print(result.model_dump_json(indent=2))

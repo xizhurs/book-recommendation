@@ -85,6 +85,9 @@ class DiscoveryPage(BaseModel):
 class RecommendRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
     max_steps: int | None = Field(default=None, ge=1, le=8)
+    session_id: str | None = Field(
+        default=None, min_length=1, max_length=200, pattern=r"^[\x20-\x7e]+$"
+    )
 
     @field_validator("query")
     @classmethod

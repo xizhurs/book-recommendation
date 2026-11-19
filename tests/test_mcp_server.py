@@ -92,3 +92,14 @@ def test_search_library_reads_the_configured_database(
     books: list[dict[str, Any]] = payload["books"]
     assert books[0]["title"] == "Dune"
     assert "review" not in books[0]
+
+
+def test_server_instructions_share_the_agents_discovery_guidance() -> None:
+    from bookshelf import agent, tools
+
+    instructions = mcp_server.mcp.instructions or ""
+    assert tools.TASTE_GUIDANCE in instructions
+    assert tools.DISCOVERY_GUIDANCE in instructions
+    assert tools.TASTE_GUIDANCE in agent.SYSTEM_PROMPT
+    assert tools.DISCOVERY_GUIDANCE in agent.SYSTEM_PROMPT
+    assert "Review text is private" in instructions

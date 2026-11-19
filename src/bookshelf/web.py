@@ -7,7 +7,9 @@ layer and hands plain models to these helpers.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from html import escape
+from urllib.parse import urlencode
 
 from .models import BookOut, DiscoveryItem, DiscoveryPage, ReadingStatus, Recommendation, Stats
 
@@ -118,7 +120,9 @@ details p { margin: 6px 0 0; color: var(--muted); }
   display: block; margin-top: 12px; font-size: 0.8rem; color: var(--ink);
   word-break: break-all;
 }
-nav { display: flex; gap: 16px; font-size: 0.9rem; }
+nav { display: flex; gap: 16px; font-size: 0.9rem; align-items: center; }
+nav .stop { margin-left: auto; }
+nav .stop button { padding: 4px 10px; font-size: 0.8rem; }
 nav a { color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; }
 nav a:hover { color: var(--ink); border-bottom-color: var(--line); }
 nav a[aria-current="page"] { color: var(--accent); border-bottom-color: currentColor; }
@@ -136,6 +140,21 @@ nav a[aria-current="page"] { color: var(--accent); border-bottom-color: currentC
 .steps code { color: var(--ink); }
 .steps pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; font-size: 0.75rem; }
 .privacy { margin: 8px 0 16px; }
+.askform { display: grid; gap: 10px; margin: 0 0 16px; }
+.askrow { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.askrow label {
+  color: var(--muted); font-size: 0.82rem; display: flex; gap: 6px; align-items: center;
+}
+input[type="text"], input[type="number"] {
+  font: inherit; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel); color: inherit; min-width: 0;
+}
+input[type="number"] { width: 5em; }
+button.secondary { background: var(--panel); color: inherit; border-color: var(--line); }
+.history { margin: 0 0 16px; font-size: 0.85rem; }
+.history .turn { margin: 8px 0; white-space: pre-wrap; }
+.history .q { font-weight: 600; }
+.history form { margin-top: 8px; }
 """
 
 
@@ -231,7 +250,42 @@ def _nav(current: str) -> str:
     for href, label in links:
         current_attr = ' aria-current="page"' if href == current else ""
         parts.append(f'<a href="{href}"{current_attr}>{label}</a>')
-    return "<nav>" + "".join(parts) + "</nav>"
+    stop = (
+        '<form method="post" action="/shutdown" class="stop" '
+        "onsubmit=\"return confirm('Stop the AI Bookshelf server?')\">"
+        '<button type="submit" class="secondary" title="Stop the server">Stop app</button></form>'
+    )
+    return "<nav>" + "".join(parts) + stop + "</nav>"
+
+
+def render_stopped() -> str:
+    return _shell_bare(
+        title="Stopped · AI Bookshelf",
+        content=(
+            '<div class="empty"><p>AI Bookshelf has stopped.</p>'
+            '<p class="muted">Start it again with <code>uv run uvicorn bookshelf.main:app '
+            "--host 127.0.0.1 --port 8000</code>. You can close this tab.</p></div>"
+        ),
+    )
+
+
+def _shell_bare(*, title: str, content: str) -> str:
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{escape(title)}</title>
+<style>{_STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+<header><h1>AI Bookshelf</h1></header>
+{content}
+</div>
+</body>
+</html>
+"""
 
 
 def _shell(*, title: str, current: str, content: str) -> str:
@@ -360,11 +414,26 @@ def render_discover(
     return _shell(title="Find books · AI Bookshelf", current="/find", content=content)
 
 
+@dataclass(frozen=True)
+class AskForm:
+    """Values the Ask page echoes back and the choices it offers."""
+
+    query: str = ""
+    session_id: str = ""
+    provider: str = "ollama"
+    model: str = ""
+    max_steps: int | None = None
+    rerank: bool = True
+    openai_ready: bool = False
+    models: dict[str, str] = field(default_factory=dict)
+
+
 def render_ask(
     *,
-    query: str | None,
+    form: AskForm,
     result: Recommendation | None,
     error: str | None,
+    history: list[tuple[str, str]] | None = None,
 ) -> str:
     if error is not None:
         body = f'<div class="empty"><p>{escape(error)}</p></div>'
@@ -378,16 +447,90 @@ def render_ask(
     else:
         body = _answer_body(result)
     content = f"""<p class="sub">The model chooses tools, reads the results, then answers.</p>
-<form class="filters" method="get" action="/ask">
-<input type="search" name="q" value="{escape(query or "")}"
- placeholder="What should I read next?" aria-label="Ask the bookshelf" maxlength="1000">
-<button type="submit">Ask</button>
-</form>
+{_ask_form(form)}
 <p class="muted privacy">Tool results never include review text. With
 <code>LLM_PROVIDER=ollama</code> everything stays on this machine; with
-<code>openai</code> your question and library metadata go to the hosted API.</p>
-{body}"""
+<code>openai</code> your question, earlier turns of the session and library metadata go to
+the hosted API.</p>
+{_history(form.session_id, history or [])}
+{body}
+{_SESSION_SCRIPT}"""
     return _shell(title="Ask · AI Bookshelf", current="/ask", content=content)
+
+
+def _ask_form(form: AskForm) -> str:
+    providers = []
+    for value, label, ready in (
+        ("ollama", "Ollama (local)", True),
+        (
+            "openai",
+            "OpenAI (hosted)" + ("" if form.openai_ready else " — no API key"),
+            form.openai_ready,
+        ),
+    ):
+        chosen = " selected" if value == form.provider else ""
+        disabled = "" if ready or value == form.provider else " disabled"
+        providers.append(f'<option value="{value}"{chosen}{disabled}>{escape(label)}</option>')
+    suggestions = "".join(
+        f'<option value="{escape(name)}">' for name in dict.fromkeys(form.models.values()) if name
+    )
+    steps = "" if form.max_steps is None else str(form.max_steps)
+    skip_rerank = "" if form.rerank else " checked"
+    return f"""<form class="askform" method="get" action="/ask">
+<div class="askrow">
+<input type="search" name="q" value="{escape(form.query)}" style="flex: 1 1 280px"
+ placeholder="What should I read next?" aria-label="Ask the bookshelf" maxlength="1000">
+<button type="submit">Ask</button>
+</div>
+<div class="askrow">
+<label>Session <input type="text" id="session_id" name="session_id"
+ value="{escape(form.session_id)}" maxlength="200" placeholder="none (no memory)"
+ aria-label="Session id"></label>
+<button type="button" class="secondary" id="new-session">New session</button>
+<label>Provider
+<select name="provider" aria-label="LLM provider">{"".join(providers)}</select></label>
+<label>Model <input type="text" name="model" value="{escape(form.model)}" list="models"
+ placeholder="default" maxlength="100" aria-label="Model name"></label>
+<datalist id="models">{suggestions}</datalist>
+<label>Max steps <input type="number" name="max_steps" min="1" max="8" value="{steps}"
+ placeholder="auto" aria-label="Max steps"></label>
+<label><input type="checkbox" name="no_rerank" value="1"{skip_rerank}> Skip rerank</label>
+</div>
+</form>"""
+
+
+def _history(session_id: str, turns: list[tuple[str, str]]) -> str:
+    if not session_id or not turns:
+        return ""
+    items = "".join(
+        f'<div class="turn"><div class="q">{escape(question)}</div>{escape(answer)}</div>'
+        for question, answer in turns
+    )
+    clear = "/ask/clear?" + urlencode({"session_id": session_id})
+    return (
+        f'<details class="history"><summary>Earlier in this session ({len(turns)})</summary>'
+        f"{items}"
+        f'<form method="post" action="{escape(clear)}">'
+        '<button type="submit" class="secondary">Clear this session\'s memory</button></form>'
+        "</details>"
+    )
+
+
+# Remembers the session id in this browser and fills it in on a fresh /ask visit.
+_SESSION_SCRIPT = """<script>
+(function () {
+  var input = document.getElementById("session_id");
+  if (!input) return;
+  var key = "bookshelf.session_id";
+  try { if (!input.value) input.value = localStorage.getItem(key) || ""; } catch (e) {}
+  document.getElementById("new-session").addEventListener("click", function () {
+    input.value = "web-" + Math.random().toString(36).slice(2, 10);
+  });
+  input.form.addEventListener("submit", function () {
+    try { localStorage.setItem(key, input.value.trim()); } catch (e) {}
+  });
+})();
+</script>"""
 
 
 def _answer_body(result: Recommendation) -> str:

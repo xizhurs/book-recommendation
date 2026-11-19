@@ -160,3 +160,35 @@ def test_discover_books_delegates_to_the_service(
 
 def test_discover_books_requires_a_query(conn: sqlite3.Connection, settings: Settings) -> None:
     assert "query is required" in call(conn, settings, "discover_books", {})["error"]
+
+
+def test_search_library_falls_back_to_fuzzy_matches_for_typos(
+    library: sqlite3.Connection, settings: Settings
+) -> None:
+    payload = call(library, settings, "search_library", {"query": "dnue frank hebert"})
+
+    assert payload["fuzzy"] is True
+    assert [book["title"] for book in payload["books"]] == ["Dune"]  # type: ignore[index]
+    assert "closest spellings" in str(payload["note"])
+
+
+def test_fuzzy_fallback_respects_filters(library: sqlite3.Connection, settings: Settings) -> None:
+    payload = call(library, settings, "search_library", {"query": "Piranesy", "min_rating": 5})
+
+    assert payload["books"] == []
+    assert "fuzzy" not in payload
+
+
+def test_exact_matches_are_not_marked_fuzzy(
+    library: sqlite3.Connection, settings: Settings
+) -> None:
+    payload = call(library, settings, "search_library", {"query": "piranesi"})
+
+    assert payload["total"] == 1
+    assert "fuzzy" not in payload
+
+
+def test_unrelated_queries_return_nothing(library: sqlite3.Connection, settings: Settings) -> None:
+    payload = call(library, settings, "search_library", {"query": "zzzzzz qqqqqq"})
+
+    assert payload == {"total": 0, "books": []}

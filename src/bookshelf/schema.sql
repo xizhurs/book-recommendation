@@ -66,3 +66,15 @@ CREATE TABLE IF NOT EXISTS remote_cache (
 );
 
 CREATE INDEX IF NOT EXISTS idx_remote_cache_expires ON remote_cache (expires_at);
+
+-- Conversation memory for the agent: question/answer text only, keyed by session id. Tool
+-- results (and so any library detail beyond what the answer mentions) are never stored here.
+CREATE TABLE IF NOT EXISTS conversation_turns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_turns_session ON conversation_turns (session_id, id);

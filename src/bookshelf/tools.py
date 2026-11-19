@@ -14,10 +14,27 @@ from typing import Any
 from . import rerank
 from .config import Settings
 from .models import BookOut, ReadingStatus
-from .services import discover, get_book, get_stats, list_books
+from .services import discover, fuzzy_search_books, get_book, get_stats, list_books
 
 MAX_SEARCH_LIMIT = 25
 MAX_DISCOVER_LIMIT = 15
+
+# Shared by the built-in agent's system prompt and the MCP server instructions, so every client
+# gets the same guidance on using these tools.
+TASTE_GUIDANCE = (
+    "For open-ended requests ('what should I read', 'based on what I read') first learn the "
+    "reader's taste: search_library with min_rating 4 for favourites, status read for recent "
+    "reads, and library_stats for favourite authors. Base the suggestions on what you find and "
+    "name the owned books each one follows from. For narrow requests, search only what is "
+    "relevant."
+)
+DISCOVERY_GUIDANCE = (
+    "discover_books is a plain keyword search with no notion of 'similar to'; topic or genre "
+    "queries return noise (essays, biographies, unrelated classics). To recommend new books, "
+    "name specific candidates from your own knowledge of similar books, then confirm each with "
+    "discover_books using its exact title and author. Recommend only books that search "
+    "confirmed exist and are not already owned; say so if none could be confirmed."
+)
 
 TOOL_SPECS: list[dict[str, Any]] = [
     {
@@ -78,7 +95,11 @@ TOOL_SPECS: list[dict[str, Any]] = [
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Topic, title, or author to search for.",
+                        "description": (
+                            "Keyword search, not 'similar to'. Works best with an exact title "
+                            "and author (e.g. 'Bridget Jones's Diary Helen Fielding') to confirm "
+                            "a book exists; topic or genre queries return mostly noise."
+                        ),
                     },
                     "limit": {
                         "type": "integer",
@@ -148,13 +169,25 @@ def _search_library(
     limit = _int_argument(arguments.get("limit"), default=10) or 10
     limit = max(1, min(MAX_SEARCH_LIMIT, limit))
 
+    query = _str_argument(arguments.get("query"))
     books, total = list_books(
         conn,
-        q=_str_argument(arguments.get("query")),
+        q=query,
         status=status,
         min_rating=min_rating,
         limit=limit,
     )
+    if total == 0 and query:
+        similar = fuzzy_search_books(
+            conn, q=query, status=status, min_rating=min_rating, limit=limit
+        )
+        if similar:
+            return {
+                "total": len(similar),
+                "books": [_book_summary(book) for book in similar],
+                "fuzzy": True,
+                "note": f"No exact match for {query!r}; these are the closest spellings.",
+            }
     return {"total": total, "books": [_book_summary(book) for book in books]}
 
 

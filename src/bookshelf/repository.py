@@ -4,7 +4,7 @@ import sqlite3
 from collections import Counter
 from datetime import date
 
-from .matching import title_author_key
+from .matching import fuzzy_score, title_author_key
 from .models import AuthorCount, BookOut, ReadingStatus, ShelfCount, Stats
 
 BOOK_COLUMNS = """
@@ -122,6 +122,31 @@ def get_book(conn: sqlite3.Connection, book_id: int) -> BookOut | None:
     return _row_to_book(row) if row is not None else None
 
 
+def fuzzy_search_books(
+    conn: sqlite3.Connection,
+    *,
+    q: str,
+    status: ReadingStatus | None = None,
+    min_rating: int | None = None,
+    limit: int = 10,
+) -> list[BookOut]:
+    """Typo-tolerant title/author search, best match first. Meant as a fallback for LIKE."""
+    where, params = _where(None, status, min_rating)
+    scored: list[tuple[float, str, int]] = []
+    for row in conn.execute(f"SELECT b.id, b.title, a.name AS author {BOOK_FROM} {where}", params):
+        score = fuzzy_score(q, f"{row['title']} {row['author']}")
+        if score > 0:
+            scored.append((score, row["title"].lower(), row["id"]))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+
+    books: list[BookOut] = []
+    for _, _, book_id in scored[:limit]:
+        book = get_book(conn, book_id)
+        if book is not None:
+            books.append(book)
+    return books
+
+
 def library_identity(conn: sqlite3.Connection) -> tuple[set[str], set[tuple[str, str]]]:
     """ISBNs and normalized (title, author) keys already present in the library."""
     isbns: set[str] = set()
@@ -175,6 +200,36 @@ def store_cached_payload(
         (source, cache_key, payload, fetched_at, expires_at),
     )
     conn.commit()
+
+
+def get_conversation(
+    conn: sqlite3.Connection, session_id: str, *, limit: int
+) -> list[tuple[str, str]]:
+    """The last ``limit`` (question, answer) turns of a session, oldest first."""
+    rows = conn.execute(
+        """
+        SELECT question, answer FROM conversation_turns
+        WHERE session_id = ? ORDER BY id DESC LIMIT ?
+        """,
+        (session_id, limit),
+    ).fetchall()
+    return [(str(row["question"]), str(row["answer"])) for row in reversed(rows)]
+
+
+def append_conversation_turn(
+    conn: sqlite3.Connection, session_id: str, question: str, answer: str
+) -> None:
+    conn.execute(
+        "INSERT INTO conversation_turns (session_id, question, answer) VALUES (?, ?, ?)",
+        (session_id, question, answer),
+    )
+    conn.commit()
+
+
+def clear_conversation(conn: sqlite3.Connection, session_id: str) -> int:
+    cursor = conn.execute("DELETE FROM conversation_turns WHERE session_id = ?", (session_id,))
+    conn.commit()
+    return cursor.rowcount
 
 
 def get_stats(conn: sqlite3.Connection) -> Stats:

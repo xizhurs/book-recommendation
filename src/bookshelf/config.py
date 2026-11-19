@@ -23,14 +23,58 @@ class LLMSettings(BaseSettings):
 
     llm_provider: Literal["openai", "ollama"] = "ollama"
     openai_api_key: SecretStr | None = None
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "gpt-6-luna"
     openai_base_url: str = "https://api.openai.com/v1"
-    ollama_model: str = "llama3.1"
+    # Chat completions rejects function tools while a reasoning model is thinking, so default
+    # to "none". Set it empty for models that do not accept the parameter at all.
+    openai_reasoning_effort: str = "none"
+    ollama_model: str = "qwen3.5:4b"
     ollama_base_url: str = "http://127.0.0.1:11434/v1"
 
     llm_timeout_seconds: float = 90.0
     llm_max_steps: int = 4
     llm_temperature: float = 0.2
+
+
+class HubSettings(BaseSettings):
+    """Optional Hugging Face token for the one-time cross-encoder download.
+
+    ``.env`` is read by pydantic-settings only, not exported to ``os.environ``, so the Hub
+    client would never see ``HF_TOKEN`` from ``.env`` on its own. The token is sent only to
+    huggingface.co.
+    """
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+
+    hf_token: SecretStr | None = None
+
+
+class TracingSettings(BaseSettings):
+    """Langfuse tracing: off unless both keys are set, or when ``LANGFUSE_TRACING_ENABLED=false``.
+
+    Bare ``LANGFUSE_*`` names are what the Langfuse docs use. When enabled, agent runs (the
+    question, tool arguments and results, model output) are sent to ``langfuse_base_url``.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: SecretStr | None = None
+    langfuse_base_url: str = "https://cloud.langfuse.com"
+    langfuse_tracing_enabled: bool = True
+
+    @property
+    def enabled(self) -> bool:
+        return (
+            self.langfuse_tracing_enabled
+            and bool(self.langfuse_public_key)
+            and self.langfuse_secret_key is not None
+            and bool(self.langfuse_secret_key.get_secret_value())
+        )
 
 
 class Settings(BaseSettings):
@@ -43,6 +87,8 @@ class Settings(BaseSettings):
     db_path: Path = Path("data/bookshelf.db")
     api_host: str = "127.0.0.1"
     api_port: int = 8000
+    # Lets the web UI's Stop button end the server process; set false to disable the endpoint.
+    allow_shutdown: bool = True
 
     # M2: Open Library discovery. Responses are cached in SQLite and every search is
     # capped by a request budget so a bug or a clicked-again page cannot hammer the API.
@@ -58,3 +104,22 @@ class Settings(BaseSettings):
 
     # M4: LLM provider for the recommendation loop (bare env names, see LLMSettings).
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    tracing: TracingSettings = Field(default_factory=TracingSettings)
+
+    def with_overrides(
+        self,
+        *,
+        provider: Literal["openai", "ollama"] | None = None,
+        model: str | None = None,
+        rerank: bool | None = None,
+    ) -> Settings:
+        """A copy with per-request choices applied; ``model`` targets the resulting provider."""
+        llm = self.llm
+        if provider is not None:
+            llm = llm.model_copy(update={"llm_provider": provider})
+        if model is not None:
+            llm = llm.model_copy(update={f"{llm.llm_provider}_model": model})
+        update: dict[str, object] = {"llm": llm}
+        if rerank is not None:
+            update["rerank_enabled"] = self.rerank_enabled and rerank
+        return self.model_copy(update=update)

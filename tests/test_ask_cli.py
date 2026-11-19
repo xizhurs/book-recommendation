@@ -38,8 +38,17 @@ def install_fake_agent(
         query: str,
         settings: Settings,
         max_steps: int | None = None,
+        session_id: str | None = None,
     ) -> Recommendation:
-        calls.append({"query": query, "settings": settings, "max_steps": max_steps, "conn": conn})
+        calls.append(
+            {
+                "query": query,
+                "settings": settings,
+                "max_steps": max_steps,
+                "session_id": session_id,
+                "conn": conn,
+            }
+        )
         return fake_result()
 
     monkeypatch.setattr(cli.agent, "recommend", fake_recommend)
@@ -58,6 +67,18 @@ def test_prints_the_answer_and_summary(
     assert "Try Piranesi." in captured.out
     assert "fake · fake-1 · 1 tool call" in captured.out
     assert "search_library" not in captured.out
+
+
+def test_summary_pluralises_tool_calls(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    result = fake_result()
+    result.steps = result.steps * 2
+    monkeypatch.setattr(cli.agent, "recommend", lambda *args, **kwargs: result)
+
+    cli.main(["--db", str(db_path), "what next?"])
+
+    assert "fake · fake-1 · 2 tool calls" in capsys.readouterr().out
 
 
 def test_steps_flag_prints_tool_calls(
@@ -96,6 +117,27 @@ def test_query_and_max_steps_are_forwarded(db_path: Path, monkeypatch: pytest.Mo
     assert calls[0]["max_steps"] == 2
 
 
+def test_session_id_is_forwarded(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = install_fake_agent(monkeypatch)
+
+    cli.main(["--db", str(db_path), "--session-id", " chat-1 ", "what next?"])
+    cli.main(["--db", str(db_path), "what next?"])
+
+    assert [c["session_id"] for c in calls] == ["chat-1", None]
+
+
+def test_rejects_invalid_session_id(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = install_fake_agent(monkeypatch)
+
+    exit_code = cli.main(["--db", str(db_path), "--session-id", "bad\u00e9", "what next?"])
+
+    assert exit_code == 2
+    assert calls == []
+    assert "--session-id" in capsys.readouterr().err
+
+
 def test_no_rerank_disables_reranking(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls = install_fake_agent(monkeypatch)
 
@@ -114,6 +156,39 @@ def test_reranking_stays_enabled_by_default(db_path: Path, monkeypatch: pytest.M
     settings = calls[0]["settings"]
     assert isinstance(settings, Settings)
     assert settings.rerank_enabled is True
+
+
+def test_model_overrides_the_active_provider_model(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    calls = install_fake_agent(monkeypatch)
+
+    cli.main(["--db", str(db_path), "--model", "qwen3:8b", "what next?"])
+
+    settings = calls[0]["settings"]
+    assert isinstance(settings, Settings)
+    assert settings.llm.ollama_model == "qwen3:8b"
+
+
+def test_model_flag_targets_openai_when_selected(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    calls = install_fake_agent(monkeypatch)
+
+    cli.main(["--db", str(db_path), "--model", "gpt-4o", "what next?"])
+
+    settings = calls[0]["settings"]
+    assert isinstance(settings, Settings)
+    assert settings.llm.openai_model == "gpt-4o"
+
+
+def test_rejects_blank_model(db_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = cli.main(["--db", str(db_path), "--model", " ", "hello"])
+
+    assert exit_code == 2
+    assert "--model cannot be empty" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("value", ["0", "9", "-1"])

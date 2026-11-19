@@ -17,9 +17,9 @@ from .db import connect, init_db
 mcp = MCPServer(
     "bookshelf",
     instructions=(
-        "Local reading history and Open Library discovery. Use search_library and "
-        "library_stats to ground answers in the reader's shelf, and discover_books for new "
-        "suggestions. Review text is private and never returned."
+        "Local reading history and Open Library discovery. "
+        f"{tools.TASTE_GUIDANCE} {tools.DISCOVERY_GUIDANCE} "
+        "Review text is private and never returned."
     ),
 )
 

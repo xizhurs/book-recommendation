@@ -1,8 +1,10 @@
 # AI Bookshelf
 
+[![CI](https://github.com/xizhurs/book-recommendation/actions/workflows/ci.yml/badge.svg)](https://github.com/xizhurs/book-recommendation/actions/workflows/ci.yml)
+
 Local-first reading history with agentic book discovery.
 
-**Current status: M4.** Import a Goodreads CSV into SQLite, browse it through a read-only
+**Current status: M5** (Docker and optional Langfuse tracing; sandbox deferred). Import a Goodreads CSV into SQLite, browse it through a read-only
 FastAPI API or the local web pages, search Open Library for books you do not own yet, rerank
 those results with a local cross-encoder, and ask an LLM for recommendations through a
 tool-calling loop. Both a local Ollama model and the hosted OpenAI API are supported.
@@ -70,6 +72,8 @@ Open Library, <http://127.0.0.1:8000/ask> to ask for recommendations, or
 | `GET /discover` | Open Library search. Params: `q` (required), `limit`, `include_owned`, `rerank` |
 | `POST /recommend` | LLM recommendation. JSON: `{"query": "...", "max_steps": 4}` |
 | `GET /ask` | HTML page running the same loop as `/recommend`, server-rendered |
+| `POST /ask/clear?session_id=` | Delete a session's conversation memory (used by the `/ask` page) |
+| `POST /shutdown` | Stops the server (the **Stop app** button in the page header); refuses cross-origin browser requests; disable with `BOOKSHELF_ALLOW_SHUTDOWN=false` |
 
 `status` is one of `read`, `currently_reading`, or `to_read`.
 
@@ -132,6 +136,119 @@ The response includes `answer`, `provider`, `model`, and every `steps[]` entry w
 name, arguments, and result. `max_steps` (1–8, default `LLM_MAX_STEPS`) caps how many model
 turns run; when the budget runs out the loop asks once more for a plain answer.
 
+### Ask from the CLI
+
+The same loop runs without the server, using the provider set by `LLM_PROVIDER`:
+
+```bash
+uv run python -m bookshelf.ask "What should I read after Dune?"
+uv run python -m bookshelf.ask "cozy fantasy I haven't read" --steps       # show tool calls
+uv run python -m bookshelf.ask "short sci-fi" --max-steps 3 --no-rerank
+uv run python -m bookshelf.ask "what next?" --model qwen3:8b       # override the model for one run
+uv run python -m bookshelf.ask "what next?" --json --db data/other.db
+```
+
+Exit codes: `0` success, `1` the LLM request failed, `2` invalid arguments. Tool failures (for
+example Open Library being unreachable) are returned to the model rather than aborting the run.
+
+### Multi-turn conversations
+
+Pass a session id (1-200 printable ASCII characters) to make questions share memory:
+`--session-id` on `bookshelf.ask`, `"session_id"` in the `POST /recommend` body, or
+`?session_id=` on `/ask`. The last 6 question/answer pairs of that session are replayed to the
+model, so follow-ups like "something more recent?" work. Without a session id every question is
+stateless.
+
+```bash
+uv run python -m bookshelf.ask --session-id austen "What should I read after Jane Austen?"
+uv run python -m bookshelf.ask --session-id austen "Something more recent?"
+```
+
+The `/ask` page has controls for all of this: a **Session** field (remembered in your browser,
+with a "New session" button), a **Provider** and **Model** picker (OpenAI is only selectable when
+`OPENAI_API_KEY` is set), **Max steps**, and **Skip rerank**. Earlier turns of the session are
+listed under the form, with a button to clear that session's memory. Choosing OpenAI there sends
+the question to the hosted API exactly as `LLM_PROVIDER=openai` does.
+
+Memory is stored locally in the `conversation_turns` table (question and answer text only, never
+tool results or reviews) and stays until you delete those rows. Replayed turns go to the
+configured LLM provider like any other message. The same id also groups the runs into one
+Langfuse session when tracing is on.
+
+### Langfuse tracing (optional)
+
+Set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` in `.env` and every agent
+run (`/recommend`, `/ask`, `bookshelf.ask`) is recorded as one `recommend` trace with a
+`chat` generation per model turn and a `tool:<name>` observation per tool call.
+
+**Privacy:** a trace contains your question, the tool arguments and results (titles, authors,
+status, ratings; never review text) and the model's output, and it is sent to `LANGFUSE_BASE_URL`
+(Langfuse Cloud by default) even when `LLM_PROVIDER=ollama`. Leave the keys unset, or set
+`LANGFUSE_TRACING_ENABLED=false`, to send nothing. Tracing failures never fail a request.
+
+### Docker
+
+The **Stop app** button exits the server process, but the compose service uses `restart: unless-stopped`, so Docker starts it again. Use `docker compose stop` to stop it for good.
+
+Every command below is run from the repo root. `docker compose` is the easy path; `docker run`
+is the same thing spelled out.
+
+**Run the API**
+
+```bash
+docker compose up --build -d     # API on http://127.0.0.1:8000
+docker compose logs -f           # follow logs
+docker compose down              # stop
+```
+
+```bash
+docker build -t bookshelf:local .
+docker run -d --name bookshelf \
+  -p 127.0.0.1:8000:8000 \
+  --env-file .env \
+  -e BOOKSHELF_DB_PATH=/data/bookshelf.db \
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434/v1 \
+  --add-host host.docker.internal:host-gateway \
+  -v "$PWD/data:/data" -v bookshelf-models:/models \
+  --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+  bookshelf:local
+curl -s http://127.0.0.1:8000/health
+```
+
+`docker run --env-file` keeps quote characters literally (compose strips them), so for `docker
+run` write `.env` values unquoted, e.g. `LANGFUSE_BASE_URL=https://cloud.langfuse.com`.
+
+**Run the CLIs**
+
+The same image runs the CLIs: put the command after the image name. They use the same `.env`,
+`./data` DB and model cache as the API, and need no published port.
+
+```bash
+# compose: nothing else to type
+docker compose run --rm bookshelf python -m bookshelf.ingest.goodreads /data/goodreads_library_export.csv
+docker compose run --rm bookshelf python -m bookshelf.ask "What should I read after Dune?" --steps
+docker compose run --rm bookshelf python -m bookshelf.discover "dune frank herbert" --limit 5
+
+# plain docker: define the options once
+DRUN='docker run --rm --env-file .env -e BOOKSHELF_DB_PATH=/data/bookshelf.db
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+  --add-host host.docker.internal:host-gateway
+  -v '"$PWD"'/data:/data -v bookshelf-models:/models
+  --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true bookshelf:local'
+$DRUN python -m bookshelf.ask "cozy fantasy I haven't read" --max-steps 3
+$DRUN python -m bookshelf.discover "dune" --no-rerank --json
+```
+
+Put the CSV in `./data` first; inside the container it appears under `/data`. The container
+runs as a non-root user (uid 10001), so on Linux `./data` must be writable by it
+(`chown 10001 data`); Docker Desktop on macOS handles this for you.
+
+The compose file publishes the port on `127.0.0.1` only, mounts `./data` (your DB is never copied
+into the image), reads `.env` at runtime, runs as a non-root user with a read-only filesystem and
+no capabilities, and caches the reranker model in a named volume. Ollama runs on the host: the
+container reaches it at `host.docker.internal:11434`. This has not been built or run yet; the
+first build downloads torch and is large.
+
 ### Tools
 
 | Tool | Purpose |
@@ -142,6 +259,8 @@ turns run; when the budget runs out the loop asks once more for a plain answer.
 | `get_book` | One library book by numeric id |
 
 Tool output is compact JSON. It never includes review text — only `has_review`.
+`search_library` falls back to typo-tolerant matching when an exact substring search finds nothing;
+such results carry `"fuzzy": true` and a note, and respect the status/rating filters.
 
 ### Choose a provider
 
@@ -157,7 +276,7 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
 # Hosted
 LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-6-luna
 OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
@@ -271,5 +390,6 @@ src/bookshelf/
 3. **M3 (done):** Local cross-encoder reranking (`cross-encoder/ms-marco-MiniLM-L6-v2`).
 4. **M4 (done):** MCP tools and the LLM-driven retrieval loop, with Ollama and OpenAI through
    one client.
-5. **M5:** Docker, Langfuse tracing, sandbox only for dynamic analysis.
+5. **M5 (done, sandbox deferred):** Docker and Langfuse tracing. The sandbox for dynamic
+   analysis is deferred because nothing executes model-written code yet.
 6. **M6:** Retrieval evaluations and local-vs-hosted model comparison.

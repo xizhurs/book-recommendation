@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from . import tracing
 from .api.routes import books_router, router
 from .config import Settings
 from .db import connect, init_db
@@ -17,7 +18,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         init_db(conn)
     finally:
         conn.close()
-    yield
+    try:
+        yield
+    finally:
+        tracing.flush(app.state.settings.tracing)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

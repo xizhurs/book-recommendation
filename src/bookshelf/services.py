@@ -31,6 +31,19 @@ def list_books(
     )
 
 
+def fuzzy_search_books(
+    conn: sqlite3.Connection,
+    *,
+    q: str,
+    status: ReadingStatus | None = None,
+    min_rating: int | None = None,
+    limit: int = 10,
+) -> list[BookOut]:
+    return repository.fuzzy_search_books(
+        conn, q=q, status=status, min_rating=min_rating, limit=limit
+    )
+
+
 def get_book(conn: sqlite3.Connection, book_id: int) -> BookOut | None:
     return repository.get_book(conn, book_id)
 
@@ -158,3 +171,13 @@ def _to_item(work: openlibrary.OpenLibraryWork, owned: bool) -> DiscoveryItem:
         edition_count=work.edition_count,
         in_library=owned,
     )
+
+
+def session_history(
+    conn: sqlite3.Connection, session_id: str, *, limit: int
+) -> list[tuple[str, str]]:
+    return repository.get_conversation(conn, session_id, limit=limit)
+
+
+def forget_session(conn: sqlite3.Connection, session_id: str) -> int:
+    return repository.clear_conversation(conn, session_id)

@@ -56,6 +56,7 @@ class OpenAICompatibleClient:
         api_key: str | None,
         timeout: float = 90.0,
         temperature: float = 0.2,
+        extra_body: dict[str, Any] | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.provider = provider
@@ -64,6 +65,7 @@ class OpenAICompatibleClient:
         self.api_key = api_key
         self.timeout = timeout
         self.temperature = temperature
+        self.extra_body = dict(extra_body or {})
         self.transport = transport
 
     def chat(
@@ -75,6 +77,7 @@ class OpenAICompatibleClient:
             "model": self.model,
             "messages": messages,
             "temperature": self.temperature,
+            **self.extra_body,
         }
         if tools:
             body["tools"] = tools
@@ -91,12 +94,31 @@ class OpenAICompatibleClient:
                 response = client.post(f"{self.base_url}/chat/completions", json=body)
                 response.raise_for_status()
                 data = response.json()
+        except httpx.HTTPStatusError as exc:
+            detail = _error_detail(exc.response)
+            suffix = f": {detail}" if detail else ""
+            raise LLMError(f"{self.provider} request failed: {exc}{suffix}") from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"{self.provider} request failed: {exc}") from exc
         except json.JSONDecodeError as exc:
             raise LLMError(f"{self.provider} returned invalid JSON") from exc
 
         return _parse_response(data, provider=self.provider)
+
+
+def _error_detail(response: httpx.Response) -> str:
+    """The provider's own error message (OpenAI and Ollama both use ``{"error": ...}``).
+
+    Error bodies echo the problem (bad parameter, unknown model), not the request, so this
+    never includes the prompt or library data.
+    """
+    try:
+        error = response.json().get("error")
+    except (ValueError, AttributeError):
+        return ""
+    if isinstance(error, dict):
+        error = error.get("message")
+    return str(error)[:500] if error else ""
 
 
 def _parse_response(data: object, *, provider: str) -> ChatResponse:
@@ -173,6 +195,11 @@ def build_client(
             api_key=api_key,
             timeout=settings.llm_timeout_seconds,
             temperature=settings.llm_temperature,
+            extra_body=(
+                {"reasoning_effort": effort}
+                if (effort := settings.openai_reasoning_effort.strip())
+                else None
+            ),
             transport=transport,
         )
     return OpenAICompatibleClient(
